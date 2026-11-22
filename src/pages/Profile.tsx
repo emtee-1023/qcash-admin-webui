@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { useToast } from '../components/toast-context'
+import { useAuth } from '../components/auth-context'
+import { useData } from '../components/data-context'
 import { useTheme, type ThemeMode } from '../components/theme-context'
 import { Icon } from '../components/icons'
 import {
@@ -12,21 +14,27 @@ import {
   Input,
   PageHeader,
   Segmented,
+  Select,
   Toggle,
 } from '../components/ui'
-import { businesses, currentAdmin, users } from '../data/mock'
-import { formatDate } from '../lib/format'
+import { api, type IdentificationType } from '../lib/api'
+import { fromIsoDate, mapUser, toIdentificationType, toIsoDate } from '../data/mappers'
+import { formatDate, formatDateTime } from '../lib/format'
 
 export function ProfilePage({ onLogout }: { onLogout: () => void }) {
   const toast = useToast()
+  const { user, setUser } = useAuth()
+  const { businesses, users, applyUser } = useData()
   const { mode, setMode } = useTheme()
+  const [busy, setBusy] = useState(false)
   const [profile, setProfile] = useState({
-    name: currentAdmin.name,
-    phone: currentAdmin.phone,
-    email: currentAdmin.email,
+    name: user?.name ?? '',
+    phone: user?.phone ?? '',
+    email: user?.email ?? '',
+    idType: user?.idType ? (toIdentificationType(user.idType) ?? '') : '',
+    identificationNumber: user?.identificationNumber ?? '',
+    dateOfBirth: fromIsoDate(user?.dateOfBirth ?? null),
   })
-  const [passwords, setPasswords] = useState({ current: '', next: '', confirm: '' })
-  const [twoFactor, setTwoFactor] = useState(true)
   const [prefs, setPrefs] = useState({
     emailAlerts: true,
     kycUpdates: true,
@@ -34,25 +42,34 @@ export function ProfilePage({ onLogout }: { onLogout: () => void }) {
     weeklyDigest: true,
   })
 
-  function saveProfile() {
+  if (!user) return null
+  const currentUser = user
+
+  async function saveProfile() {
     if (!profile.name.trim()) {
       toast('Enter your name before saving.', 'error')
       return
     }
-    toast('Profile updated.', 'success')
-  }
 
-  function updatePassword() {
-    if (passwords.next.length < 8) {
-      toast('New password must be at least 8 characters.', 'error')
-      return
+    setBusy(true)
+    try {
+      const response = await api.updateUser(currentUser.id, {
+        name: profile.name.trim(),
+        email: profile.email.trim() || null,
+        phone_number: profile.phone.trim() || null,
+        id_type: profile.idType ? (toIdentificationType(profile.idType) as IdentificationType) : null,
+        identification_number: profile.identificationNumber.trim() || null,
+        date_of_birth: toIsoDate(profile.dateOfBirth),
+      })
+      const updated = mapUser(response.data)
+      applyUser(updated)
+      setUser(updated)
+      toast(response.message || 'Profile updated.', 'success')
+    } catch (caught) {
+      toast((caught as Error).message || 'Unable to update your profile.', 'error')
+    } finally {
+      setBusy(false)
     }
-    if (passwords.next !== passwords.confirm) {
-      toast('Passwords do not match.', 'error')
-      return
-    }
-    setPasswords({ current: '', next: '', confirm: '' })
-    toast('Password updated.', 'success')
   }
 
   return (
@@ -71,13 +88,13 @@ export function ProfilePage({ onLogout }: { onLogout: () => void }) {
       <div className="profile-layout">
         <Card className="profile-summary">
           <div className="profile-summary__avatar">
-            <Avatar name={profile.name} size={82} ring />
+            <Avatar name={profile.name || user.name} size={82} ring />
           </div>
-          <h2>{profile.name}</h2>
-          <p className="profile-summary__email">{profile.email}</p>
+          <h2>{user.name}</h2>
+          <p className="profile-summary__email">{user.email ?? 'No email on file'}</p>
           <div className="profile-summary__role">
-            <Badge tone="purple" dot>
-              {currentAdmin.role}
+            <Badge tone={user.isAdmin ? 'purple' : 'gray'} dot>
+              {user.isAdmin ? 'Admin' : 'Customer'}
             </Badge>
           </div>
           <div className="profile-summary__stats">
@@ -93,19 +110,19 @@ export function ProfilePage({ onLogout }: { onLogout: () => void }) {
           <div className="profile-summary__meta">
             <div>
               <Icon name="phone" size={15} />
-              {profile.phone}
+              {user.phone ?? 'No phone on file'}
             </div>
             <div>
               <Icon name="mail" size={15} />
-              {profile.email}
+              {user.email ?? 'No email on file'}
             </div>
             <div>
               <Icon name="shield" size={15} />
-              Admin since {formatDate(currentAdmin.adminSince)}
+              Admin since {formatDate(user.adminActivatedAt)}
             </div>
             <div>
               <Icon name="clock" size={15} />
-              Last active today, 08:42
+              Updated {formatDateTime(user.updatedAt)}
             </div>
           </div>
         </Card>
@@ -139,73 +156,66 @@ export function ProfilePage({ onLogout }: { onLogout: () => void }) {
                   onChange={(event) => setProfile({ ...profile, email: event.target.value })}
                 />
               </Field>
+              <Field label="Date of birth" htmlFor="profile-dob">
+                <Input
+                  id="profile-dob"
+                  type="date"
+                  value={profile.dateOfBirth}
+                  onChange={(event) => setProfile({ ...profile, dateOfBirth: event.target.value })}
+                />
+              </Field>
+              <Field label="Identification type" htmlFor="profile-id-type">
+                <Select
+                  id="profile-id-type"
+                  value={profile.idType}
+                  onChange={(event) => setProfile({ ...profile, idType: event.target.value })}
+                >
+                  <option value="">Not provided</option>
+                  <option value="kenyan_national_id">Kenyan National ID</option>
+                  <option value="passport">Passport</option>
+                </Select>
+              </Field>
+              <Field label="Identification number" htmlFor="profile-id-number">
+                <Input
+                  id="profile-id-number"
+                  value={profile.identificationNumber}
+                  onChange={(event) =>
+                    setProfile({ ...profile, identificationNumber: event.target.value })
+                  }
+                />
+              </Field>
             </div>
             <div className="row-between" style={{ marginTop: 18 }}>
               <p className="muted" style={{ fontSize: '0.76rem' }}>
                 Your phone number is used to sign in to the console.
               </p>
-              <Button onClick={saveProfile}>Save changes</Button>
+              <Button onClick={() => void saveProfile()} disabled={busy}>
+                {busy ? 'Saving…' : 'Save changes'}
+              </Button>
             </div>
           </Card>
 
           <Card>
             <CardHeader title="Security" subtitle="Protect access to the admin console" />
-            <div className="setting-row">
-              <div className="setting-row__text">
-                <strong>
-                  Two-factor authentication{' '}
-                  <Badge tone={twoFactor ? 'green' : 'gray'}>{twoFactor ? 'Enabled' : 'Off'}</Badge>
-                </strong>
-                <span>Add an extra verification step when signing in from a new device.</span>
-              </div>
-              <Toggle
-                checked={twoFactor}
-                onChange={(value) => {
-                  setTwoFactor(value)
-                  toast(value ? 'Two-factor authentication enabled.' : 'Two-factor authentication disabled.', 'info')
-                }}
-                label="Toggle two-factor authentication"
-              />
+            <div className="inline-alert inline-alert--info">
+              <Icon name="info" size={16} />
+              <span>
+                Password and two-factor settings are managed through the QCash identity flow. Use
+                sign out to end this console session.
+              </span>
             </div>
             <div className="section-divider" />
-            <div className="form-grid">
-              <Field label="Current password" htmlFor="current-password" className="field--full">
-                <Input
-                  id="current-password"
-                  type="password"
-                  autoComplete="current-password"
-                  value={passwords.current}
-                  onChange={(event) => setPasswords({ ...passwords, current: event.target.value })}
-                  placeholder="Enter current password"
-                />
-              </Field>
-              <Field label="New password" htmlFor="profile-new-password">
-                <Input
-                  id="profile-new-password"
-                  type="password"
-                  autoComplete="new-password"
-                  value={passwords.next}
-                  onChange={(event) => setPasswords({ ...passwords, next: event.target.value })}
-                  placeholder="At least 8 characters"
-                />
-              </Field>
-              <Field label="Confirm new password" htmlFor="profile-confirm-password">
-                <Input
-                  id="profile-confirm-password"
-                  type="password"
-                  autoComplete="new-password"
-                  value={passwords.confirm}
-                  onChange={(event) => setPasswords({ ...passwords, confirm: event.target.value })}
-                  placeholder="Re-enter new password"
-                />
-              </Field>
-            </div>
-            <div className="row-between" style={{ marginTop: 18 }}>
-              <p className="muted" style={{ fontSize: '0.76rem' }}>
-                Use a unique password you don&apos;t use elsewhere.
-              </p>
-              <Button variant="secondary" onClick={updatePassword}>
-                Update password
+            <div className="row-between">
+              <div>
+                <p className="text-strong" style={{ fontSize: '0.83rem' }}>
+                  Current session
+                </p>
+                <p className="muted" style={{ fontSize: '0.75rem' }}>
+                  Signed in as {user.name}
+                </p>
+              </div>
+              <Button variant="danger" iconLeft="logout" onClick={onLogout}>
+                Sign out
               </Button>
             </div>
           </Card>
@@ -247,7 +257,7 @@ export function ProfilePage({ onLogout }: { onLogout: () => void }) {
           <Card>
             <CardHeader
               title="Notification preferences"
-              subtitle="Choose what lands in your inbox"
+              subtitle="Local preferences for this device"
             />
             <div className="setting-row">
               <div className="setting-row__text">

@@ -1,8 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { AppShell } from './components/AppShell'
 import { ToastProvider } from './components/toast'
 import { ThemeProvider } from './components/theme-provider'
+import { AuthProvider } from './components/auth-provider'
+import { useAuth } from './components/auth-context'
+import { DataProvider } from './components/data-provider'
 import { NotificationProvider } from './components/notification-provider'
+import { Logo } from './components/ui'
 import { matchRoute, navigate, useHashRoute } from './lib/router'
 import { LoginPage } from './pages/Login'
 import { ActivatePage } from './pages/Activate'
@@ -14,36 +18,36 @@ import { UserDetailPage } from './pages/UserDetail'
 import { NotificationsPage } from './pages/Notifications'
 import { ProfilePage } from './pages/Profile'
 
-const SESSION_KEY = 'qcash-admin-preview'
-
 function AdminApplication() {
   const path = useHashRoute()
-  const [authenticated, setAuthenticated] = useState(
-    () => window.sessionStorage.getItem(SESSION_KEY) === '1',
-  )
+  const { user, checking, signOut } = useAuth()
   const { clean, segments } = matchRoute(path)
-  const root = segments[0] ?? 'login'
+  const root = segments[0] ?? (user ? 'overview' : 'login')
   const isAuthRoute = root === 'login' || root === 'activate'
 
   useEffect(() => {
-    if (authenticated && isAuthRoute) navigate('/overview')
-  }, [authenticated, isAuthRoute])
+    if (checking) return
+    if (!user && !isAuthRoute) navigate('/login')
+    if (user && isAuthRoute) navigate('/overview')
+  }, [checking, isAuthRoute, user])
 
-  function handleSignIn() {
-    window.sessionStorage.setItem(SESSION_KEY, '1')
-    setAuthenticated(true)
-    navigate('/overview')
+  if (checking) {
+    return (
+      <div className="app-loading">
+        <Logo variant="light" height={38} />
+        <p>Checking admin session…</p>
+      </div>
+    )
   }
 
-  function handleLogout() {
-    window.sessionStorage.removeItem(SESSION_KEY)
-    setAuthenticated(false)
-    navigate('/login')
-  }
-
-  if (!authenticated) {
+  if (!user) {
     if (root === 'activate') return <ActivatePage />
-    return <LoginPage onSignIn={handleSignIn} />
+    return <LoginPage />
+  }
+
+  async function handleLogout() {
+    await signOut()
+    navigate('/login')
   }
 
   let page = <OverviewPage />
@@ -59,9 +63,13 @@ function AdminApplication() {
   }
 
   return (
-    <AppShell path={isAuthRoute ? '/overview' : clean} onLogout={handleLogout}>
-      {page}
-    </AppShell>
+    <DataProvider>
+      <NotificationProvider>
+        <AppShell path={isAuthRoute ? '/overview' : clean} onLogout={handleLogout}>
+          {page}
+        </AppShell>
+      </NotificationProvider>
+    </DataProvider>
   )
 }
 
@@ -69,9 +77,9 @@ export default function App() {
   return (
     <ThemeProvider>
       <ToastProvider>
-        <NotificationProvider>
+        <AuthProvider>
           <AdminApplication />
-        </NotificationProvider>
+        </AuthProvider>
       </ToastProvider>
     </ThemeProvider>
   )

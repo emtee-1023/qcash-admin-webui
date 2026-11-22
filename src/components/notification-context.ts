@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react'
-import type { NotificationItem } from '../data/mock'
+import type { NotificationItem } from '../data/types'
 
 export type NotificationContextValue = {
   items: NotificationItem[]

@@ -303,6 +303,16 @@ ol {
   display: initial;
 }
 
+.app-loading {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--muted);
+}
+
 @media (max-width: 760px) {
   :root {
     font-size: 14px;

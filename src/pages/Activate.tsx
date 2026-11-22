@@ -5,6 +5,7 @@ import { Icon } from '../components/icons'
 import { Button, Field, Input, Logo } from '../components/ui'
 import { useTheme } from '../components/theme-context'
 import { ThemeToggle } from '../components/theme-toggle'
+import { api } from '../lib/api'
 import { navigate } from '../lib/router'
 
 function OtpInput({ value, onChange }: { value: string[]; onChange: (next: string[]) => void }) {
@@ -58,12 +59,30 @@ export function ActivatePage() {
   const toast = useToast()
   const { theme } = useTheme()
   const [step, setStep] = useState<1 | 2>(1)
-  const [phone, setPhone] = useState('+254 712 345 678')
+  const [phone, setPhone] = useState('')
   const [otp, setOtp] = useState(['', '', '', '', '', ''])
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [showPassword, setShowPassword] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [formError, setFormError] = useState('')
   const [errors, setErrors] = useState<{ phone?: string; otp?: string; password?: string; confirm?: string }>({})
+
+  async function resendCode() {
+    if (!phone.trim()) {
+      setErrors((current) => ({ ...current, phone: 'Enter your phone number first.' }))
+      return
+    }
+    setBusy(true)
+    try {
+      const response = await api.resendActivationOtp({ phone_number: phone.trim() })
+      toast(response.message, 'info')
+    } catch (caught) {
+      toast((caught as Error).message || 'Unable to resend the code.', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   function verifyCode(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -75,15 +94,30 @@ export function ActivatePage() {
     setStep(2)
   }
 
-  function activate(event: FormEvent<HTMLFormElement>) {
+  async function activate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const nextErrors: typeof errors = {}
     if (password.length < 8) nextErrors.password = 'Use at least 8 characters.'
     if (confirm !== password) nextErrors.confirm = 'Passwords do not match.'
     setErrors(nextErrors)
     if (Object.keys(nextErrors).length > 0) return
-    toast('Admin account activated. You can now sign in.', 'success')
-    navigate('/login')
+
+    setBusy(true)
+    setFormError('')
+    try {
+      const response = await api.activate({
+        phone_number: phone.trim(),
+        otp: otp.join(''),
+        password,
+        password_confirmation: confirm,
+      })
+      toast(response.message, 'success')
+      navigate('/login')
+    } catch (caught) {
+      setFormError((caught as Error).message || 'Unable to activate the account.')
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -190,14 +224,15 @@ export function ActivatePage() {
                   <button
                     type="button"
                     className="auth__link"
-                    onClick={() => toast('A new activation code has been sent.', 'info')}
+                    disabled={busy}
+                    onClick={() => void resendCode()}
                   >
                     Resend code
                   </button>
                 </div>
 
-                <Button type="submit" size="lg" full>
-                  Verify code
+                <Button type="submit" size="lg" full disabled={busy}>
+                  {busy ? 'Please wait…' : 'Verify code'}
                 </Button>
 
                 <button type="button" className="auth__link" onClick={() => navigate('/login')}>
@@ -269,8 +304,14 @@ export function ActivatePage() {
                   </div>
                 </Field>
 
-                <Button type="submit" size="lg" full>
-                  Activate account
+                {formError && (
+                  <p className="auth__hint" style={{ color: 'var(--red-text)' }}>
+                    {formError}
+                  </p>
+                )}
+
+                <Button type="submit" size="lg" full disabled={busy}>
+                  {busy ? 'Activating…' : 'Activate account'}
                 </Button>
 
                 <button type="button" className="auth__link" onClick={() => setStep(1)}>
@@ -281,8 +322,8 @@ export function ActivatePage() {
           )}
 
           <p className="auth__hint">
-            <strong>Design preview.</strong> Activation is simulated — the code is not verified and
-            no data leaves your browser.
+            One-time codes are delivered by SMS. Contact platform support if your invitation code
+            does not arrive.
           </p>
 
           <div className="auth__footer">

@@ -9,31 +9,117 @@ import {
   Card,
   CardHeader,
   EmptyState,
+  ErrorState,
   Field,
   InfoItem,
   Input,
+  LoadingState,
   Modal,
   Select,
-  StatusBadge,
 } from '../components/ui'
-import { businesses, currentAdmin, getUser } from '../data/mock'
-import { formatDate, formatDateTime } from '../lib/format'
+import { useAuth } from '../components/auth-context'
+import { useData } from '../components/data-context'
+import { api, type IdentificationType } from '../lib/api'
+import { fromIsoDate, mapUser, toIdentificationType, toIsoDate } from '../data/mappers'
+import { formatDate, formatDateTime, titleCase } from '../lib/format'
 import { navigate } from '../lib/router'
+
+type UserForm = {
+  name: string
+  email: string
+  phone: string
+  idType: string
+  identificationNumber: string
+  dateOfBirth: string
+}
+
+function emptyForm(): UserForm {
+  return {
+    name: '',
+    email: '',
+    phone: '',
+    idType: '',
+    identificationNumber: '',
+    dateOfBirth: '',
+  }
+}
 
 export function UserDetailPage({ id }: { id: number }) {
   const toast = useToast()
-  const seed = getUser(id)
-  const [record, setRecord] = useState(seed)
+  const { user: currentUser } = useAuth()
+  const { users, loading, error, refresh, applyUser } = useData()
+  const record = users.find((item) => item.id === id)
   const [editOpen, setEditOpen] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const [form, setForm] = useState({
-    name: seed?.name ?? '',
-    email: seed?.email ?? '',
-    phone: seed?.phone ?? '',
-    idType: seed?.idType ?? 'Kenyan National ID',
-    identificationNumber: seed?.identificationNumber ?? '',
-    dateOfBirth: seed?.dateOfBirth ?? '',
-  })
+  const [busy, setBusy] = useState(false)
+  const [form, setForm] = useState<UserForm>(emptyForm)
+
+  function openEdit() {
+    if (!record) return
+    setForm({
+      name: record.name,
+      email: record.email ?? '',
+      phone: record.phone ?? '',
+      idType: record.idType ? (toIdentificationType(record.idType) ?? '') : '',
+      identificationNumber: record.identificationNumber ?? '',
+      dateOfBirth: fromIsoDate(record.dateOfBirth),
+    })
+    setEditOpen(true)
+  }
+
+  async function saveEdit() {
+    if (!record || !form.name.trim()) return
+    setBusy(true)
+    try {
+      const response = await api.updateUser(record.id, {
+        name: form.name.trim(),
+        email: form.email.trim() || null,
+        phone_number: form.phone.trim() || null,
+        id_type: form.idType ? (toIdentificationType(form.idType) as IdentificationType) : null,
+        identification_number: form.identificationNumber.trim() || null,
+        date_of_birth: toIsoDate(form.dateOfBirth),
+      })
+      const updated = mapUser(response.data)
+      applyUser(updated)
+      setEditOpen(false)
+      toast(response.message || 'User details updated.', 'success')
+    } catch (caught) {
+      toast((caught as Error).message || 'Unable to update this user.', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function toggleAdmin() {
+    if (!record || record.id === currentUser?.id) return
+    setBusy(true)
+    try {
+      const response = record.isAdmin
+        ? await api.revokeAdmin(record.id)
+        : await api.grantAdmin(record.id)
+      applyUser(mapUser(response.data))
+      setConfirmOpen(false)
+      toast(
+        response.message ||
+          (record.isAdmin
+            ? `Admin access revoked for ${record.name}.`
+            : `Admin access granted to ${record.name}.`),
+        record.isAdmin ? 'info' : 'success',
+      )
+    } catch (caught) {
+      toast((caught as Error).message || 'Unable to update admin access.', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (loading) {
+    return <Card><LoadingState label="Loading user" /></Card>
+  }
+
+  if (error) {
+    return <Card><ErrorState message={error} onRetry={() => void refresh()} /></Card>
+  }
 
   if (!record) {
     return (
@@ -47,51 +133,7 @@ export function UserDetailPage({ id }: { id: number }) {
   }
 
   const user = record
-  const isSelf = user.id === currentAdmin.id
-  const ownedBusinesses = businesses.filter((business) =>
-    business.owners.some((owner) => owner.userId === user.id),
-  )
-
-  function openEdit() {
-    setForm({
-      name: user.name,
-      email: user.email ?? '',
-      phone: user.phone,
-      idType: user.idType,
-      identificationNumber: user.identificationNumber,
-      dateOfBirth: user.dateOfBirth,
-    })
-    setEditOpen(true)
-  }
-
-  function saveEdit() {
-    setRecord({
-      ...user,
-      name: form.name,
-      email: form.email || null,
-      phone: form.phone,
-      idType: form.idType as typeof user.idType,
-      identificationNumber: form.identificationNumber,
-      dateOfBirth: form.dateOfBirth,
-    })
-    setEditOpen(false)
-    toast('User details updated.', 'success')
-  }
-
-  function toggleAdmin() {
-    const next = !user.isAdmin
-    setRecord({
-      ...user,
-      isAdmin: next,
-      role: next ? 'Admin' : 'Customer',
-      adminActivatedAt: next ? new Date().toISOString() : null,
-    })
-    setConfirmOpen(false)
-    toast(
-      next ? `Admin access granted to ${user.name}.` : `Admin access revoked for ${user.name}.`,
-      next ? 'success' : 'info',
-    )
-  }
+  const isSelf = user.id === currentUser?.id
 
   return (
     <>
@@ -111,15 +153,13 @@ export function UserDetailPage({ id }: { id: number }) {
             <div className="profile-hero__meta">
               <span>{user.email ?? 'No email on file'}</span>
               <span className="dot-sep" />
-              <span>{user.phone}</span>
+              <span>{user.phone ?? 'No phone on file'}</span>
               <span className="dot-sep" />
-              <span>{user.idType}</span>
+              <span>{user.idType ? titleCase(user.idType) : 'ID not provided'}</span>
             </div>
             <div className="profile-hero__badges">
               <AdminBadge role={user.role} />
-              <Badge tone={user.status === 'active' ? 'green' : 'red'} dot>
-                {user.status}
-              </Badge>
+              {user.phoneVerifiedAt && <Badge tone="green" dot>Phone verified</Badge>}
               {user.isAdmin && user.adminActivatedAt && <Badge tone="navy">Admin activated</Badge>}
             </div>
           </div>
@@ -131,7 +171,7 @@ export function UserDetailPage({ id }: { id: number }) {
           <Button
             variant={user.isAdmin ? 'danger' : 'primary'}
             iconLeft="shield"
-            disabled={isSelf}
+            disabled={isSelf || busy}
             onClick={() => setConfirmOpen(true)}
           >
             {user.isAdmin ? 'Revoke admin' : 'Grant admin'}
@@ -142,8 +182,8 @@ export function UserDetailPage({ id }: { id: number }) {
       <div className="quick-stats">
         <div className="quick-stat">
           <span>Businesses</span>
-          <strong>{ownedBusinesses.length}</strong>
-          <small>Owned or co-managed</small>
+          <strong>{user.businessesCount}</strong>
+          <small>Linked to this account</small>
         </div>
         <div className="quick-stat">
           <span>Access level</span>
@@ -156,9 +196,9 @@ export function UserDetailPage({ id }: { id: number }) {
           <small>{formatDateTime(user.createdAt).split(' · ')[1]}</small>
         </div>
         <div className="quick-stat">
-          <span>Last active</span>
-          <strong>{formatDate(user.lastActiveAt)}</strong>
-          <small>{formatDateTime(user.lastActiveAt).split(' · ')[1]}</small>
+          <span>Last updated</span>
+          <strong>{formatDate(user.updatedAt)}</strong>
+          <small>{formatDateTime(user.updatedAt).split(' · ')[1]}</small>
         </div>
       </div>
 
@@ -177,20 +217,24 @@ export function UserDetailPage({ id }: { id: number }) {
             <div className="details-grid">
               <InfoItem label="Full name">{user.name}</InfoItem>
               <InfoItem label="Email address">{user.email ?? 'Not provided'}</InfoItem>
-              <InfoItem label="Phone number">{user.phone}</InfoItem>
-              <InfoItem label="Identification type">{user.idType}</InfoItem>
-              <InfoItem label="Identification number">{user.identificationNumber}</InfoItem>
+              <InfoItem label="Phone number">{user.phone ?? 'Not provided'}</InfoItem>
+              <InfoItem label="Identification type">
+                {user.idType ? titleCase(user.idType) : 'Not provided'}
+              </InfoItem>
+              <InfoItem label="Identification number">
+                {user.identificationNumber ?? 'Not provided'}
+              </InfoItem>
               <InfoItem label="Date of birth">{formatDate(user.dateOfBirth)}</InfoItem>
               <InfoItem label="Account created">{formatDateTime(user.createdAt)}</InfoItem>
-              <InfoItem label="Last active">{formatDateTime(user.lastActiveAt)}</InfoItem>
+              <InfoItem label="Last updated">{formatDateTime(user.updatedAt)}</InfoItem>
             </div>
             <div className="section-divider" />
             <div className="row wrap" style={{ gap: 8 }}>
               <Badge tone={user.email ? 'green' : 'gray'} dot>
                 {user.email ? 'Email on file' : 'No email'}
               </Badge>
-              <Badge tone="green" dot>
-                Phone verified
+              <Badge tone={user.phoneVerifiedAt ? 'green' : 'gray'} dot>
+                {user.phoneVerifiedAt ? 'Phone verified' : 'Phone unverified'}
               </Badge>
               <Badge tone={user.isAdmin ? 'purple' : 'gray'} dot>
                 {user.isAdmin ? 'Admin account' : 'Customer account'}
@@ -200,42 +244,24 @@ export function UserDetailPage({ id }: { id: number }) {
 
           <Card>
             <CardHeader
-              title="Businesses"
-              subtitle="Businesses this user is attached to"
-              action={
-                <Badge tone="gray">{ownedBusinesses.length}</Badge>
-              }
+              title="Business associations"
+              subtitle="Business access from the user record"
+              action={<Badge tone="gray">{user.businessesCount}</Badge>}
             />
-            {ownedBusinesses.length ? (
-              <div className="team-list">
-                {ownedBusinesses.map((business) => (
-                  <div key={business.id} className="team-row">
-                    <Avatar name={business.name} size={40} />
-                    <div className="team-row__meta">
-                      <strong>{business.name}</strong>
-                      <span>
-                        {business.businessType} · {business.town}, {business.county}
-                      </span>
-                    </div>
-                    <StatusBadge status={business.status} />
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      iconRight="arrowRight"
-                      onClick={() => navigate(`/businesses/${business.id}`)}
-                    >
-                      View
-                    </Button>
-                  </div>
-                ))}
+            <div className="mini-stats" style={{ marginTop: 0, paddingTop: 0, borderTop: 'none' }}>
+              <div className="mini-stat">
+                <strong>{user.businessesCount}</strong>
+                <span>Businesses linked</span>
               </div>
-            ) : (
-              <EmptyState
-                icon="businesses"
-                title="No businesses yet"
-                description="This user has not registered or joined a business on QCash."
-              />
-            )}
+              <div className="mini-stat">
+                <strong>{user.isAdmin ? 'Admin' : 'Standard'}</strong>
+                <span>Account access</span>
+              </div>
+            </div>
+            <div className="inline-alert inline-alert--info" style={{ marginTop: 12 }}>
+              <Icon name="info" size={15} />
+              <span>Open a business from the Businesses page to review owners and payment accounts.</span>
+            </div>
           </Card>
         </div>
 
@@ -270,10 +296,6 @@ export function UserDetailPage({ id }: { id: number }) {
                 {user.adminActivatedAt ? formatDateTime(user.adminActivatedAt) : 'Not activated'}
               </span>
             </div>
-            <div className="account-line">
-              <span className="account-line__label">Account status</span>
-              <span className="account-line__value">{user.status}</span>
-            </div>
             {isSelf ? (
               <div className="inline-alert inline-alert--info" style={{ marginTop: 16 }}>
                 <Icon name="info" size={15} />
@@ -293,7 +315,7 @@ export function UserDetailPage({ id }: { id: number }) {
               variant={user.isAdmin ? 'danger' : 'primary'}
               full
               iconLeft="shield"
-              disabled={isSelf}
+              disabled={isSelf || busy}
               style={{ marginTop: 14 }}
               onClick={() => setConfirmOpen(true)}
             >
@@ -302,22 +324,25 @@ export function UserDetailPage({ id }: { id: number }) {
           </Card>
 
           <Card>
-            <CardHeader title="Account security" subtitle="Verification and session details" />
+            <CardHeader title="Account verification" subtitle="Identity checks on file" />
             <div className="checklist">
               <div className="checklist__item">
-                <span className="checklist__icon">
-                  <Icon name="check" size={12} />
+                <span
+                  className="checklist__icon"
+                  data-state={user.phoneVerifiedAt ? 'done' : 'pending'}
+                >
+                  <Icon name={user.phoneVerifiedAt ? 'check' : 'clock'} size={12} />
                 </span>
                 Phone number verified
               </div>
               <div className="checklist__item">
                 <span
                   className="checklist__icon"
-                  data-state={user.email ? 'done' : 'pending'}
+                  data-state={user.emailVerifiedAt ? 'done' : 'pending'}
                 >
-                  <Icon name={user.email ? 'check' : 'clock'} size={12} />
+                  <Icon name={user.emailVerifiedAt ? 'check' : 'clock'} size={12} />
                 </span>
-                {user.email ? 'Email address on file' : 'Email address missing'}
+                {user.emailVerifiedAt ? 'Email address verified' : 'Email address not verified'}
               </div>
               <div className="checklist__item">
                 <span
@@ -331,8 +356,8 @@ export function UserDetailPage({ id }: { id: number }) {
             </div>
             <div className="section-divider" />
             <div className="account-line">
-              <span className="account-line__label">Last active</span>
-              <span className="account-line__value">{formatDateTime(user.lastActiveAt)}</span>
+              <span className="account-line__label">Last updated</span>
+              <span className="account-line__value">{formatDateTime(user.updatedAt)}</span>
             </div>
             <div className="account-line">
               <span className="account-line__label">Date of birth</span>
@@ -352,7 +377,9 @@ export function UserDetailPage({ id }: { id: number }) {
             <Button variant="ghost" onClick={() => setEditOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={saveEdit}>Save changes</Button>
+            <Button onClick={() => void saveEdit()} disabled={busy}>
+              {busy ? 'Saving…' : 'Save changes'}
+            </Button>
           </>
         }
       >
@@ -391,10 +418,11 @@ export function UserDetailPage({ id }: { id: number }) {
             <Select
               id="user-id-type"
               value={form.idType}
-              onChange={(event) => setForm({ ...form, idType: event.target.value as typeof form.idType })}
+              onChange={(event) => setForm({ ...form, idType: event.target.value })}
             >
-              <option value="Kenyan National ID">Kenyan National ID</option>
-              <option value="Passport">Passport</option>
+              <option value="">Not provided</option>
+              <option value="kenyan_national_id">Kenyan National ID</option>
+              <option value="passport">Passport</option>
             </Select>
           </Field>
           <Field label="Identification number" htmlFor="user-id-number">
@@ -422,7 +450,7 @@ export function UserDetailPage({ id }: { id: number }) {
             <Button variant="ghost" onClick={() => setConfirmOpen(false)}>
               Cancel
             </Button>
-            <Button variant={user.isAdmin ? 'danger' : 'primary'} onClick={toggleAdmin}>
+            <Button variant={user.isAdmin ? 'danger' : 'primary'} onClick={() => void toggleAdmin()} disabled={busy}>
               {user.isAdmin ? 'Revoke access' : 'Grant access'}
             </Button>
           </>
@@ -432,7 +460,7 @@ export function UserDetailPage({ id }: { id: number }) {
           <Icon name={user.isAdmin ? 'alert' : 'info'} size={16} />
           <span>
             {user.isAdmin
-              ? 'This action takes effect immediately. The user will be signed out of any active admin sessions.'
+              ? 'This action takes effect immediately. The user will lose console access.'
               : 'Admin access grants full visibility of businesses, KYC records and user management tools.'}
           </span>
         </div>

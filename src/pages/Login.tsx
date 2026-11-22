@@ -4,24 +4,40 @@ import { Icon } from '../components/icons'
 import { Button, Field, Input, Logo } from '../components/ui'
 import { useTheme } from '../components/theme-context'
 import { ThemeToggle } from '../components/theme-toggle'
+import { useAuth } from '../components/auth-context'
+import { useToast } from '../components/toast-context'
 import { navigate } from '../lib/router'
 
-export function LoginPage({ onSignIn }: { onSignIn: () => void }) {
+export function LoginPage() {
   const { theme } = useTheme()
-  const [phone, setPhone] = useState('+254 712 345 678')
-  const [password, setPassword] = useState('qcash-demo')
+  const { signIn } = useAuth()
+  const toast = useToast()
+  const [phone, setPhone] = useState('')
+  const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [remember, setRemember] = useState(true)
-  const [errors, setErrors] = useState<{ phone?: string; password?: string }>({})
+  const [busy, setBusy] = useState(false)
+  const [errors, setErrors] = useState<{ phone?: string; password?: string; form?: string }>({})
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const nextErrors: typeof errors = {}
     if (!phone.trim()) nextErrors.phone = 'Enter the phone number linked to your admin account.'
     if (!password.trim()) nextErrors.password = 'Enter your password.'
+    if (password.length > 0 && password.length < 8) nextErrors.password = 'Password must be at least 8 characters.'
     setErrors(nextErrors)
     if (Object.keys(nextErrors).length > 0) return
-    onSignIn()
+
+    setBusy(true)
+    try {
+      await signIn(phone.trim(), password, remember)
+      navigate('/overview')
+      toast('Signed in to the admin console.', 'success')
+    } catch (caught) {
+      setErrors({ form: (caught as Error).message || 'Unable to sign in. Please try again.' })
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -148,14 +164,15 @@ export function LoginPage({ onSignIn }: { onSignIn: () => void }) {
               </button>
             </div>
 
-            <Button type="submit" size="lg" full className="auth__submit">
-              Sign in to console
-            </Button>
+            {errors.form && (
+              <p className="auth__hint" style={{ color: 'var(--red-text)' }}>
+                {errors.form}
+              </p>
+            )}
 
-            <p className="auth__hint">
-              <strong>Design preview.</strong> This is a static UI walkthrough — any credentials
-              will open the console and no requests are sent.
-            </p>
+            <Button type="submit" size="lg" full className="auth__submit" disabled={busy}>
+              {busy ? 'Signing in…' : 'Sign in to console'}
+            </Button>
           </form>
 
           <div className="auth__divider">New administrator</div>

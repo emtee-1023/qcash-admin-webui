@@ -2,8 +2,9 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Icon, type IconName } from './icons'
 import { Avatar, Badge, IconButton, Logo } from './ui'
 import { cx, timeAgo } from '../lib/format'
-import { currentAdmin } from '../data/mock'
 import { navigate } from '../lib/router'
+import { useAuth } from './auth-context'
+import { useData } from './data-context'
 import { useNotifications } from './notification-context'
 import { useTheme } from './theme-context'
 import { ThemeToggle } from './theme-toggle'
@@ -16,7 +17,7 @@ const navSections: Array<{
     label: 'Workspace',
     items: [
       { to: '/overview', label: 'Overview', icon: 'overview' },
-      { to: '/businesses', label: 'Businesses', icon: 'businesses', badge: 4 },
+      { to: '/businesses', label: 'Businesses', icon: 'businesses' },
       { to: '/users', label: 'Users', icon: 'users' },
     ],
   },
@@ -63,8 +64,13 @@ export function AppShell({
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [openMenu, setOpenMenu] = useState<'notifications' | 'profile' | null>(null)
   const { items, unread, markAllRead, toggleRead } = useNotifications()
+  const { user } = useAuth()
+  const { businesses } = useData()
   const { theme } = useTheme()
   const popoverRef = useRef<HTMLDivElement | null>(null)
+  const adminName = user?.name ?? 'Administrator'
+  const adminRole = user?.isAdmin ? 'Admin' : 'Customer'
+  const pendingKyc = businesses.filter((business) => business.kycStatus === 'pending').length
 
   const segments = path.split('/').filter(Boolean)
   const root = segments[0] ?? 'overview'
@@ -127,7 +133,12 @@ export function AppShell({
                     root === item.to.slice(1) ||
                     (root === 'businesses' && item.to === '/businesses') ||
                     (root === 'users' && item.to === '/users')
-                  const badge = item.to === '/notifications' ? unread : item.badge
+                  const badge =
+                    item.to === '/notifications'
+                      ? unread
+                      : item.to === '/businesses'
+                        ? pendingKyc
+                        : item.badge
                   return (
                     <a
                       key={item.to}
@@ -160,10 +171,10 @@ export function AppShell({
         </div>
 
         <div className="sidebar__admin">
-          <Avatar name={currentAdmin.name} size={34} />
+          <Avatar name={adminName} size={34} />
           <div className="sidebar__admin-meta">
-            <strong>{currentAdmin.name}</strong>
-            <span>{currentAdmin.role}</span>
+            <strong>{adminName}</strong>
+            <span>{adminRole}</span>
           </div>
           <IconButton icon="logout" label="Sign out" onClick={onLogout} />
         </div>
@@ -260,18 +271,18 @@ export function AppShell({
                   setOpenMenu((current) => (current === 'profile' ? null : 'profile'))
                 }
               >
-                <Avatar name={currentAdmin.name} size={36} />
+                <Avatar name={adminName} size={36} />
                 <span className="topbar__profile-meta">
-                  <strong>{currentAdmin.name}</strong>
-                  <span>{currentAdmin.role}</span>
+                  <strong>{adminName}</strong>
+                  <span>{adminRole}</span>
                 </span>
                 <Icon name="chevronDown" size={15} />
               </button>
               {openMenu === 'profile' && (
                 <div className="menu-panel" role="menu">
                   <div className="menu-panel__head">
-                    <strong>{currentAdmin.name}</strong>
-                    <span>{currentAdmin.email}</span>
+                    <strong>{adminName}</strong>
+                    <span>{user?.email ?? 'No email on file'}</span>
                   </div>
                   <button
                     type="button"
