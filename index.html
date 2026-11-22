@@ -2,9 +2,32 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/brand/qcash-icon-green.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>admin</title>
+    <meta name="theme-color" content="#1DAB87" />
+    <script>
+      const storedTheme = localStorage.getItem('qcash-admin-theme')
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+      const initialTheme =
+        storedTheme === 'light' || storedTheme === 'dark'
+          ? storedTheme
+          : prefersDark
+            ? 'dark'
+            : 'light'
+      document.documentElement.dataset.theme = initialTheme
+      document.documentElement.style.colorScheme = initialTheme
+    </script>
+    <meta
+      name="description"
+      content="QCash admin console — manage businesses, verify KYC and oversee users across the QCash network."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <title>QCash Admin Console</title>
   </head>
   <body>
     <div id="root"></div>
