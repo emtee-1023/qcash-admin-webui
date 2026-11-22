@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useToast } from '../components/toast-context'
 import { Icon, type IconName } from '../components/icons'
 import {
@@ -8,18 +8,24 @@ import {
   Card,
   CardHeader,
   EmptyState,
+  ErrorState,
   Field,
   InfoItem,
   Input,
   KycBadge,
+  LoadingState,
   Modal,
   Select,
   StatusBadge,
   Tabs,
+  Toggle,
   type BadgeTone,
 } from '../components/ui'
-import { businessTypes, getBusiness, type BusinessStatus, type KycStatus } from '../data/mock'
-import { formatDate, formatDateTime, formatKES } from '../lib/format'
+import { useData } from '../components/data-context'
+import { api, type BusinessStatus, type KycStatus, type SubCountyResource, type WardResource } from '../lib/api'
+import { mapBusinessDetail } from '../data/mappers'
+import type { Business } from '../data/types'
+import { formatDate, formatDateTime, formatKES, titleCase } from '../lib/format'
 import { navigate } from '../lib/router'
 
 const statusCopy: Array<{ value: BusinessStatus; label: string; hint: string }> = [
@@ -35,10 +41,52 @@ const paymentTone: Record<string, BadgeTone> = {
   inactive: 'gray',
 }
 
+type BusinessForm = {
+  name: string
+  businessTypeId: string
+  hasPhysicalLocation: boolean
+  countyId: string
+  subCountyId: string
+  wardId: string
+  address: string
+  phone: string
+  email: string
+  registrationNumber: string
+}
+
+function emptyForm(): BusinessForm {
+  return {
+    name: '',
+    businessTypeId: '',
+    hasPhysicalLocation: false,
+    countyId: '',
+    subCountyId: '',
+    wardId: '',
+    address: '',
+    phone: '',
+    email: '',
+    registrationNumber: '',
+  }
+}
+
+function formFromBusiness(business: Business): BusinessForm {
+  return {
+    name: business.name,
+    businessTypeId: business.businessTypeId ? String(business.businessTypeId) : '',
+    hasPhysicalLocation: business.hasPhysicalLocation,
+    countyId: business.countyId ? String(business.countyId) : '',
+    subCountyId: business.subCountyId ? String(business.subCountyId) : '',
+    wardId: business.wardId ? String(business.wardId) : '',
+    address: business.physicalAddress ?? '',
+    phone: business.phone ?? '',
+    email: business.email ?? '',
+    registrationNumber: business.registrationNumber ?? '',
+  }
+}
+
 function kycCheckState(status: KycStatus, key: string, verifiedPayment: boolean, hasLocation: boolean) {
   if (status === 'rejected') return 'missing'
-  if (status === 'pending') return 'pending'
-  if (status === 'unverified') return 'pending'
+  if (status === 'pending' || status === 'unverified') return 'pending'
   if (key === 'payments' && !verifiedPayment) return 'pending'
   if (key === 'location' && !hasLocation) return 'missing'
   return 'done'
@@ -46,31 +94,91 @@ function kycCheckState(status: KycStatus, key: string, verifiedPayment: boolean,
 
 export function BusinessDetailPage({ id }: { id: number }) {
   const toast = useToast()
-  const seed = getBusiness(id)
-  const [record, setRecord] = useState(seed)
+  const { businessTypes, counties, applyBusiness } = useData()
+  const [record, setRecord] = useState<Business | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
   const [tab, setTab] = useState('overview')
   const [editOpen, setEditOpen] = useState(false)
-  const [form, setForm] = useState({
-    name: seed?.name ?? '',
-    type: seed?.businessType ?? businessTypes[0],
-    category: seed?.businessCategory ?? '',
-    registrationNumber: seed?.registrationNumber ?? '',
-    phone: seed?.phone ?? '',
-    email: seed?.email ?? '',
-    county: seed?.county ?? '',
-    town: seed?.town ?? '',
-    ward: seed?.ward ?? '',
-    address: seed?.physicalAddress ?? '',
-  })
+  const [form, setForm] = useState<BusinessForm>(emptyForm)
+  const [subCounties, setSubCounties] = useState<SubCountyResource[]>([])
+  const [wards, setWards] = useState<WardResource[]>([])
 
-  if (!record) {
+  const loadBusiness = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const response = await api.getBusiness(id)
+      const business = mapBusinessDetail(response.data)
+      setRecord(business)
+      setForm(formFromBusiness(business))
+    } catch (caught) {
+      setError((caught as Error).message || 'Unable to load this business.')
+    } finally {
+      setLoading(false)
+    }
+  }, [id])
+
+  useEffect(() => {
+    Promise.resolve().then(() => void loadBusiness())
+  }, [loadBusiness])
+
+  useEffect(() => {
+    if (!form.countyId) {
+      Promise.resolve().then(() => setSubCounties([]))
+      return
+    }
+    let active = true
+    api
+      .listSubCounties(Number(form.countyId))
+      .then((response) => {
+        if (active) setSubCounties(response.data)
+      })
+      .catch(() => {
+        if (active) setSubCounties([])
+      })
+    return () => {
+      active = false
+    }
+  }, [form.countyId])
+
+  useEffect(() => {
+    if (!form.subCountyId) {
+      Promise.resolve().then(() => setWards([]))
+      return
+    }
+    let active = true
+    api
+      .listWards(Number(form.subCountyId))
+      .then((response) => {
+        if (active) setWards(response.data)
+      })
+      .catch(() => {
+        if (active) setWards([])
+      })
+    return () => {
+      active = false
+    }
+  }, [form.subCountyId])
+
+  if (loading) {
+    return <Card><LoadingState label="Loading business" /></Card>
+  }
+
+  if (error || !record) {
     return (
-      <EmptyState
-        icon="businesses"
-        title="Business not found"
-        description="This business may have been removed or the link is out of date."
-        action={<Button onClick={() => navigate('/businesses')}>Back to businesses</Button>}
-      />
+      <Card>
+        <ErrorState
+          message={error ?? 'Business not found.'}
+          onRetry={() => void loadBusiness()}
+        />
+        <div style={{ display: 'flex', justifyContent: 'center', paddingBottom: 20 }}>
+          <Button variant="secondary" onClick={() => navigate('/businesses')}>
+            Back to businesses
+          </Button>
+        </div>
+      </Card>
     )
   }
 
@@ -79,52 +187,73 @@ export function BusinessDetailPage({ id }: { id: number }) {
   const primaryOwner = business.owners.find((owner) => owner.isPrimary) ?? business.owners[0]
 
   function openEdit() {
-    setForm({
-      name: business.name,
-      type: business.businessType,
-      category: business.businessCategory,
-      registrationNumber: business.registrationNumber ?? '',
-      phone: business.phone,
-      email: business.email,
-      county: business.county,
-      town: business.town,
-      ward: business.ward,
-      address: business.physicalAddress ?? '',
-    })
+    setForm(formFromBusiness(business))
     setEditOpen(true)
   }
 
-  function saveEdit() {
-    setRecord({
-      ...business,
-      name: form.name,
-      businessType: form.type,
-      businessCategory: form.category,
-      registrationNumber: form.registrationNumber || null,
-      phone: form.phone,
-      email: form.email,
-      county: form.county,
-      town: form.town,
-      ward: form.ward,
-      physicalAddress: form.address || null,
-    })
-    setEditOpen(false)
-    toast('Business details updated.', 'success')
+  async function saveEdit() {
+    if (!form.name.trim() || !form.businessTypeId) return
+    setBusy(true)
+    try {
+      const response = await api.updateBusiness(id, {
+        business_name: form.name.trim(),
+        business_type_id: Number(form.businessTypeId),
+        has_physical_location: form.hasPhysicalLocation,
+        county_id: form.hasPhysicalLocation && form.countyId ? Number(form.countyId) : null,
+        sub_county_id: form.hasPhysicalLocation && form.subCountyId ? Number(form.subCountyId) : null,
+        ward_id: form.hasPhysicalLocation && form.wardId ? Number(form.wardId) : null,
+        physical_address: form.hasPhysicalLocation ? form.address || null : null,
+        phone_number: form.phone.trim() || null,
+        email: form.email.trim() || null,
+        registration_number: form.registrationNumber.trim() || null,
+      })
+      const updated = mapBusinessDetail(response.data)
+      setRecord(updated)
+      applyBusiness(updated)
+      setEditOpen(false)
+      toast(response.message || 'Business details updated.', 'success')
+    } catch (caught) {
+      toast((caught as Error).message || 'Unable to update this business.', 'error')
+    } finally {
+      setBusy(false)
+    }
   }
 
-  function setStatus(next: BusinessStatus) {
+  async function setStatus(next: BusinessStatus) {
     if (next === business.status) return
-    setRecord({ ...business, status: next })
-    const label = statusCopy.find((option) => option.value === next)?.label ?? next
-    toast(`Business status changed to ${label.toLowerCase()}.`, next === 'suspended' ? 'info' : 'success')
+    setBusy(true)
+    try {
+      const response = await api.updateBusinessStatus(id, { status: next })
+      const updated = mapBusinessDetail(response.data)
+      setRecord(updated)
+      applyBusiness(updated)
+      const label = statusCopy.find((option) => option.value === next)?.label ?? next
+      toast(response.message || `Business status changed to ${label.toLowerCase()}.`, 'success')
+    } catch (caught) {
+      toast((caught as Error).message || 'Unable to update business status.', 'error')
+    } finally {
+      setBusy(false)
+    }
   }
 
-  function setKyc(next: KycStatus) {
-    setRecord({ ...business, kycStatus: next })
-    toast(
-      next === 'verified' ? 'KYC approved. The business can now transact.' : 'KYC marked as rejected.',
-      next === 'verified' ? 'success' : 'info',
-    )
+  async function setKyc(next: KycStatus) {
+    if (next === business.kycStatus) return
+    setBusy(true)
+    try {
+      const response = await api.updateBusinessKycStatus(id, { kyc_status: next })
+      const updated = mapBusinessDetail(response.data)
+      setRecord(updated)
+      applyBusiness(updated)
+      toast(
+        response.message ||
+          (next === 'verified' ? 'KYC approved. The business can now transact.' : 'KYC status updated.'),
+        next === 'verified' ? 'success' : 'info',
+      )
+    } catch (caught) {
+      toast((caught as Error).message || 'Unable to update KYC status.', 'error')
+    } finally {
+      setBusy(false)
+    }
   }
 
   const events: Array<{ icon: IconName; tone: string; title: string; description: string; time: string }> = [
@@ -138,14 +267,14 @@ export function BusinessDetailPage({ id }: { id: number }) {
           : business.kycStatus === 'rejected'
             ? 'Submitted documents did not meet verification requirements.'
             : 'Documents are queued for compliance review.',
-      time: formatDateTime(business.createdAt),
+      time: formatDateTime(business.updatedAt ?? business.createdAt),
     },
     {
       icon: 'creditCard',
       tone: 'blue',
       title: 'Payment account linked',
       description: business.paymentAccounts.length
-        ? `${business.paymentAccounts[0].provider} ${business.paymentAccounts[0].channelType} ${business.paymentAccounts[0].accountReference} was attached to this business.`
+        ? `${business.paymentAccounts[0].provider} ${titleCase(business.paymentAccounts[0].channelType)} ${business.paymentAccounts[0].accountReference ?? ''} was attached to this business.`
         : 'No payment account has been linked yet.',
       time: formatDateTime(business.createdAt),
     },
@@ -183,7 +312,7 @@ export function BusinessDetailPage({ id }: { id: number }) {
               <span>{business.businessType}</span>
               <span className="dot-sep" />
               <span>
-                {business.town}, {business.county}
+                {business.town ?? business.ward ?? 'Location not set'}, {business.county ?? '—'}
               </span>
             </div>
             <div className="profile-hero__badges">
@@ -198,24 +327,24 @@ export function BusinessDetailPage({ id }: { id: number }) {
           </div>
         </div>
         <div className="profile-hero__actions">
-          <Button variant="secondary" iconLeft="edit" onClick={openEdit}>
+          <Button variant="secondary" iconLeft="edit" onClick={openEdit} disabled={busy}>
             Edit details
           </Button>
           {business.kycStatus !== 'verified' ? (
-            <Button variant="success" iconLeft="shield" onClick={() => setKyc('verified')}>
+            <Button variant="success" iconLeft="shield" disabled={busy} onClick={() => void setKyc('verified')}>
               Approve KYC
             </Button>
           ) : (
-            <Button variant="secondary" iconLeft="shield" onClick={() => setKyc('pending')}>
+            <Button variant="secondary" iconLeft="shield" disabled={busy} onClick={() => void setKyc('pending')}>
               Re-open KYC
             </Button>
           )}
           {business.status === 'suspended' ? (
-            <Button iconLeft="refresh" onClick={() => setStatus('active')}>
+            <Button iconLeft="refresh" disabled={busy} onClick={() => void setStatus('active')}>
               Reactivate
             </Button>
           ) : (
-            <Button variant="danger" iconLeft="ban" onClick={() => setStatus('suspended')}>
+            <Button variant="danger" iconLeft="ban" disabled={busy} onClick={() => void setStatus('suspended')}>
               Suspend
             </Button>
           )}
@@ -229,14 +358,14 @@ export function BusinessDetailPage({ id }: { id: number }) {
           <small>Held by QCash</small>
         </div>
         <div className="quick-stat">
-          <span>Monthly inflow</span>
-          <strong>{formatKES(business.monthlyInflowMinor, { compact: true })}</strong>
-          <small>Trailing 30 days</small>
+          <span>Collection account</span>
+          <strong>{business.collectionAccount ?? 'Not linked'}</strong>
+          <small>Receives business payments</small>
         </div>
         <div className="quick-stat">
-          <span>Outstanding advances</span>
-          <strong>{formatKES(business.advancesOutstandingMinor, { compact: true })}</strong>
-          <small>Across open advances</small>
+          <span>Paybill number</span>
+          <strong>{business.paybillNumber || 'Not linked'}</strong>
+          <small>QCash payment channel</small>
         </div>
         <div className="quick-stat">
           <span>Owners & team</span>
@@ -247,7 +376,7 @@ export function BusinessDetailPage({ id }: { id: number }) {
 
       <div className="detail-tabs">
         <Tabs tabs={tabs} active={tab} onChange={setTab} />
-        <span className="toolbar__meta">Updated {formatDate(business.createdAt)}</span>
+        <span className="toolbar__meta">Updated {formatDate(business.updatedAt ?? business.createdAt)}</span>
       </div>
 
       {tab === 'overview' && (
@@ -265,16 +394,14 @@ export function BusinessDetailPage({ id }: { id: number }) {
               />
               <div className="details-grid">
                 <InfoItem label="Business name">{business.name}</InfoItem>
-                <InfoItem label="Registration number">
-                  {business.registrationNumber ?? 'Not provided'}
-                </InfoItem>
+                <InfoItem label="Registration number">{business.registrationNumber ?? 'Not provided'}</InfoItem>
                 <InfoItem label="Business type">{business.businessType}</InfoItem>
-                <InfoItem label="Business category">{business.businessCategory}</InfoItem>
-                <InfoItem label="Phone number">{business.phone}</InfoItem>
-                <InfoItem label="Email address">{business.email}</InfoItem>
-                <InfoItem label="County">{business.county}</InfoItem>
+                <InfoItem label="Business category">{business.businessCategory ?? 'Not provided'}</InfoItem>
+                <InfoItem label="Phone number">{business.phone ?? 'Not provided'}</InfoItem>
+                <InfoItem label="Email address">{business.email ?? 'Not provided'}</InfoItem>
+                <InfoItem label="County">{business.county ?? 'Not provided'}</InfoItem>
                 <InfoItem label="Town / ward">
-                  {business.town} · {business.ward}
+                  {business.town ?? '—'} · {business.ward ?? '—'}
                 </InfoItem>
                 <InfoItem label="Operating since">{formatDate(business.operatingSince)}</InfoItem>
                 <InfoItem label="Joined QCash">{formatDate(business.createdAt)}</InfoItem>
@@ -295,17 +422,21 @@ export function BusinessDetailPage({ id }: { id: number }) {
                 }
               />
               <div className="team-list">
-                {business.owners.map((owner) => (
-                  <div key={owner.id} className="team-row">
-                    <Avatar name={owner.name} size={38} />
-                    <div className="team-row__meta">
-                      <strong>{owner.name}</strong>
-                      <span>{owner.email}</span>
+                {business.owners.length ? (
+                  business.owners.map((owner) => (
+                    <div key={owner.id} className="team-row">
+                      <Avatar name={owner.name} size={38} />
+                      <div className="team-row__meta">
+                        <strong>{owner.name}</strong>
+                        <span>{owner.email ?? owner.phone ?? 'No contact details'}</span>
+                      </div>
+                      <Badge tone={owner.role.toLowerCase() === 'owner' ? 'navy' : 'gray'}>{titleCase(owner.role)}</Badge>
+                      {owner.isPrimary && <Badge tone="green">Primary</Badge>}
                     </div>
-                    <Badge tone={owner.role === 'Owner' ? 'navy' : 'gray'}>{owner.role}</Badge>
-                    {owner.isPrimary && <Badge tone="green">Primary</Badge>}
-                  </div>
-                ))}
+                  ))
+                ) : (
+                  <p className="muted">No team members were returned for this business.</p>
+                )}
               </div>
             </Card>
           </div>
@@ -327,7 +458,7 @@ export function BusinessDetailPage({ id }: { id: number }) {
               </div>
               <div className="account-line">
                 <span className="account-line__label">Paybill number</span>
-                <span className="account-line__value">{business.paybillNumber ?? 'Not linked'}</span>
+                <span className="account-line__value">{business.paybillNumber || 'Not linked'}</span>
               </div>
               <div className="account-line">
                 <span className="account-line__label">Payment provider</span>
@@ -409,8 +540,8 @@ export function BusinessDetailPage({ id }: { id: number }) {
                   size="sm"
                   variant="success"
                   iconLeft="check"
-                  disabled={business.kycStatus === 'verified'}
-                  onClick={() => setKyc('verified')}
+                  disabled={busy || business.kycStatus === 'verified'}
+                  onClick={() => void setKyc('verified')}
                 >
                   Approve
                 </Button>
@@ -418,8 +549,8 @@ export function BusinessDetailPage({ id }: { id: number }) {
                   size="sm"
                   variant="danger"
                   iconLeft="close"
-                  disabled={business.kycStatus === 'rejected'}
-                  onClick={() => setKyc('rejected')}
+                  disabled={busy || business.kycStatus === 'rejected'}
+                  onClick={() => void setKyc('rejected')}
                 >
                   Reject
                 </Button>
@@ -433,8 +564,9 @@ export function BusinessDetailPage({ id }: { id: number }) {
                   <button
                     key={option.value}
                     type="button"
+                    disabled={busy}
                     className={`status-option${business.status === option.value ? ' status-option--active' : ''}`}
-                    onClick={() => setStatus(option.value)}
+                    onClick={() => void setStatus(option.value)}
                   >
                     <span className="status-option__radio" />
                     <span>
@@ -456,39 +588,37 @@ export function BusinessDetailPage({ id }: { id: number }) {
               <CardHeader
                 title="Owners & team"
                 subtitle="People attached to this business account"
-                action={
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    iconLeft="userPlus"
-                    onClick={() => toast('Member invitations are disabled in this design preview.', 'info')}
-                  >
-                    Invite member
-                  </Button>
-                }
               />
-              <div className="team-list">
-                {business.owners.map((owner) => (
-                  <div key={owner.id} className="team-row">
-                    <Avatar name={owner.name} size={42} />
-                    <div className="team-row__meta">
-                      <strong>{owner.name}</strong>
-                      <span>
-                        {owner.phone} · {owner.email}
-                      </span>
+              {business.owners.length ? (
+                <div className="team-list">
+                  {business.owners.map((owner) => (
+                    <div key={owner.id} className="team-row">
+                      <Avatar name={owner.name} size={42} />
+                      <div className="team-row__meta">
+                        <strong>{owner.name}</strong>
+                        <span>
+                          {owner.phone ?? 'No phone'} · {owner.email ?? 'No email'}
+                        </span>
+                      </div>
+                      <Badge tone={owner.role.toLowerCase() === 'owner' ? 'navy' : 'gray'}>{titleCase(owner.role)}</Badge>
+                      {owner.isPrimary && <Badge tone="green">Primary contact</Badge>}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => navigate(`/users/${owner.userId}`)}
+                      >
+                        View user
+                      </Button>
                     </div>
-                    <Badge tone={owner.role === 'Owner' ? 'navy' : 'gray'}>{owner.role}</Badge>
-                    {owner.isPrimary && <Badge tone="green">Primary contact</Badge>}
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => navigate(`/users/${owner.userId}`)}
-                    >
-                      View user
-                    </Button>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <EmptyState
+                  icon="users"
+                  title="No team members"
+                  description="No owners or team members were returned for this business."
+                />
+              )}
             </Card>
           </div>
           <div className="detail-column">
@@ -501,22 +631,22 @@ export function BusinessDetailPage({ id }: { id: number }) {
                     <div>
                       <p className="text-strong">{primaryOwner.name}</p>
                       <p className="muted" style={{ fontSize: '0.78rem' }}>
-                        {primaryOwner.role} · {primaryOwner.status}
+                        {titleCase(primaryOwner.role)} · {primaryOwner.status}
                       </p>
                     </div>
                   </div>
                   <div className="section-divider" />
                   <div className="account-line">
                     <span className="account-line__label">Phone</span>
-                    <span className="account-line__value">{primaryOwner.phone}</span>
+                    <span className="account-line__value">{primaryOwner.phone ?? 'Not provided'}</span>
                   </div>
                   <div className="account-line">
                     <span className="account-line__label">Email</span>
-                    <span className="account-line__value">{primaryOwner.email}</span>
+                    <span className="account-line__value">{primaryOwner.email ?? 'Not provided'}</span>
                   </div>
                   <div className="account-line">
                     <span className="account-line__label">Business role</span>
-                    <span className="account-line__value">{primaryOwner.role}</span>
+                    <span className="account-line__value">{titleCase(primaryOwner.role)}</span>
                   </div>
                   <Button
                     variant="secondary"
@@ -543,16 +673,6 @@ export function BusinessDetailPage({ id }: { id: number }) {
               <CardHeader
                 title="Payment accounts"
                 subtitle="Payment channels linked to this business"
-                action={
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    iconLeft="plus"
-                    onClick={() => toast('Adding payment accounts is disabled in this design preview.', 'info')}
-                  >
-                    Add account
-                  </Button>
-                }
               />
               {business.paymentAccounts.length ? (
                 <div className="payment-accounts">
@@ -563,12 +683,12 @@ export function BusinessDetailPage({ id }: { id: number }) {
                       </span>
                       <div className="payment-account__body">
                         <strong>
-                          {account.provider} {account.channelType} · {account.accountReference}
+                          {account.provider} {titleCase(account.channelType)} · {account.accountReference ?? '—'}
                         </strong>
-                        <span>{account.accountName}</span>
+                        <span>{account.accountName ?? 'No account name on file'}</span>
                         <div className="payment-account__meta">
                           <Badge tone={paymentTone[account.status] ?? 'gray'} dot>
-                            {account.status}
+                            {titleCase(account.status)}
                           </Badge>
                           <span>
                             {account.verifiedAt
@@ -599,7 +719,7 @@ export function BusinessDetailPage({ id }: { id: number }) {
               </div>
               <div className="account-line">
                 <span className="account-line__label">Paybill number</span>
-                <span className="account-line__value">{business.paybillNumber ?? 'Not linked'}</span>
+                <span className="account-line__value">{business.paybillNumber || 'Not linked'}</span>
               </div>
               <div className="account-line">
                 <span className="account-line__label">Settlement wallet</span>
@@ -654,7 +774,9 @@ export function BusinessDetailPage({ id }: { id: number }) {
             <Button variant="ghost" onClick={() => setEditOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={saveEdit}>Save changes</Button>
+            <Button onClick={() => void saveEdit()} disabled={busy || !form.businessTypeId}>
+              {busy ? 'Saving…' : 'Save changes'}
+            </Button>
           </>
         }
       >
@@ -669,22 +791,16 @@ export function BusinessDetailPage({ id }: { id: number }) {
           <Field label="Business type" htmlFor="edit-type">
             <Select
               id="edit-type"
-              value={form.type}
-              onChange={(event) => setForm({ ...form, type: event.target.value })}
+              value={form.businessTypeId}
+              onChange={(event) => setForm({ ...form, businessTypeId: event.target.value })}
             >
+              <option value="">Select business type</option>
               {businessTypes.map((option) => (
-                <option key={option} value={option}>
-                  {option}
+                <option key={option.id} value={option.id}>
+                  {option.name}
                 </option>
               ))}
             </Select>
-          </Field>
-          <Field label="Business category" htmlFor="edit-category">
-            <Input
-              id="edit-category"
-              value={form.category}
-              onChange={(event) => setForm({ ...form, category: event.target.value })}
-            />
           </Field>
           <Field label="Registration number" htmlFor="edit-registration">
             <Input
@@ -709,31 +825,79 @@ export function BusinessDetailPage({ id }: { id: number }) {
               onChange={(event) => setForm({ ...form, email: event.target.value })}
             />
           </Field>
-          <Field label="County" htmlFor="edit-county">
-            <Input
-              id="edit-county"
-              value={form.county}
-              onChange={(event) => setForm({ ...form, county: event.target.value })}
-            />
+          <Field label="Has physical location" htmlFor="edit-physical">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingTop: 6 }}>
+              <Toggle
+                checked={form.hasPhysicalLocation}
+                onChange={(checked) =>
+                  setForm({
+                    ...form,
+                    hasPhysicalLocation: checked,
+                    countyId: checked ? form.countyId : '',
+                    subCountyId: checked ? form.subCountyId : '',
+                    wardId: checked ? form.wardId : '',
+                    address: checked ? form.address : '',
+                  })
+                }
+                label="Has physical location"
+              />
+              <span className="muted" style={{ fontSize: '0.8rem' }}>
+                {form.hasPhysicalLocation ? 'Location details required' : 'Online business'}
+              </span>
+            </div>
           </Field>
-          <Field label="Town" htmlFor="edit-town">
-            <Input
-              id="edit-town"
-              value={form.town}
-              onChange={(event) => setForm({ ...form, town: event.target.value })}
-            />
+          <Field label="County" htmlFor="edit-county">
+            <Select
+              id="edit-county"
+              value={form.countyId}
+              disabled={!form.hasPhysicalLocation}
+              onChange={(event) =>
+                setForm({ ...form, countyId: event.target.value, subCountyId: '', wardId: '' })
+              }
+            >
+              <option value="">Select county</option>
+              {counties.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Sub-county" htmlFor="edit-subcounty">
+            <Select
+              id="edit-subcounty"
+              value={form.subCountyId}
+              disabled={!form.hasPhysicalLocation || !form.countyId}
+              onChange={(event) => setForm({ ...form, subCountyId: event.target.value, wardId: '' })}
+            >
+              <option value="">Select sub-county</option>
+              {subCounties.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.name}
+                </option>
+              ))}
+            </Select>
           </Field>
           <Field label="Ward" htmlFor="edit-ward">
-            <Input
+            <Select
               id="edit-ward"
-              value={form.ward}
-              onChange={(event) => setForm({ ...form, ward: event.target.value })}
-            />
+              value={form.wardId}
+              disabled={!form.hasPhysicalLocation || !form.subCountyId}
+              onChange={(event) => setForm({ ...form, wardId: event.target.value })}
+            >
+              <option value="">Select ward</option>
+              {wards.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.name}
+                </option>
+              ))}
+            </Select>
           </Field>
           <Field label="Physical address" htmlFor="edit-address" className="field--full">
             <Input
               id="edit-address"
               value={form.address}
+              disabled={!form.hasPhysicalLocation}
               onChange={(event) => setForm({ ...form, address: event.target.value })}
               placeholder="Street, building, shop number"
             />

@@ -448,6 +448,35 @@ export function EmptyState({
   )
 }
 
+export function LoadingState({ label = 'Loading data' }: { label?: string }) {
+  return (
+    <div className="empty-state">
+      <span className="empty-state__icon">
+        <Icon name="activity" size={24} />
+      </span>
+      <h3>{label}</h3>
+      <p>Fetching the latest records from QCash.</p>
+    </div>
+  )
+}
+
+export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  return (
+    <div className="empty-state">
+      <span className="empty-state__icon">
+        <Icon name="alert" size={24} />
+      </span>
+      <h3>Unable to load data</h3>
+      <p>{message}</p>
+      {onRetry && (
+        <Button variant="secondary" onClick={onRetry}>
+          Try again
+        </Button>
+      )}
+    </div>
+  )
+}
+
 export function PageHeader({
   eyebrow,
   title,

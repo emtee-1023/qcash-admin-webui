@@ -1,10 +1,41 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useToast } from '../components/toast-context'
+import { useAuth } from '../components/auth-context'
+import { useData } from '../components/data-context'
 import { Icon, type IconName } from '../components/icons'
-import { Avatar, Badge, Button, Card, CardHeader, KycBadge, ProgressBar, Segmented, TrendPill } from '../components/ui'
-import { activityFeed, businesses, countByKyc, countByStatus, currentAdmin, registrationTrend, users } from '../data/mock'
+import {
+  Avatar,
+  Badge,
+  Button,
+  Card,
+  CardHeader,
+  ErrorState,
+  KycBadge,
+  LoadingState,
+  ProgressBar,
+  Segmented,
+  TrendPill,
+} from '../components/ui'
+import type { AdminUser, Business } from '../data/types'
 import { formatKES, timeAgo } from '../lib/format'
 import { navigate } from '../lib/router'
+
+type Trend = {
+  months: string[]
+  businesses: number[]
+  users: number[]
+}
+
+type ActivityItem = {
+  id: string
+  actor: string
+  action: string
+  target: string
+  meta: string
+  time: string
+  tone: string
+  icon: IconName
+}
 
 function cumulative(values: number[]) {
   let total = 0
@@ -12,6 +43,29 @@ function cumulative(values: number[]) {
     total += value
     return total
   })
+}
+
+function buildTrend(businesses: Business[], users: AdminUser[], range: '6m' | '12m'): Trend {
+  const length = range === '6m' ? 6 : 12
+  const now = new Date()
+  const months = Array.from({ length }, (_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - (length - 1 - index), 1)
+    return {
+      key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`,
+      label: date.toLocaleDateString('en-GB', { month: 'short' }),
+    }
+  })
+
+  const countByMonth = (records: Array<{ createdAt: string | null }>) =>
+    months.map((month) =>
+      records.filter((record) => record.createdAt?.startsWith(month.key)).length,
+    )
+
+  return {
+    months: months.map((month) => month.label),
+    businesses: cumulative(countByMonth(businesses)),
+    users: cumulative(countByMonth(users)),
+  }
 }
 
 function buildPoints(values: number[], width: number, height: number, pad: number, max: number) {
@@ -28,23 +82,17 @@ function toLine(points: Array<{ x: number; y: number }>) {
   return points.map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(' ')
 }
 
-function GrowthChart({ range }: { range: '6m' | '12m' }) {
-  const allBusinesses = cumulative(registrationTrend.businesses)
-  const allUsers = cumulative(registrationTrend.users)
-  const slice = range === '6m' ? -6 : undefined
-  const businessSeries = slice ? allBusinesses.slice(slice) : allBusinesses
-  const userSeries = slice ? allUsers.slice(slice) : allUsers
-  const months = slice ? registrationTrend.months.slice(slice) : registrationTrend.months
-
+function GrowthChart({ trend }: { trend: Trend }) {
   const width = 680
   const height = 250
   const pad = 34
-  const max = 16
-  const businessPoints = buildPoints(businessSeries, width, height, pad, max)
-  const userPoints = buildPoints(userSeries, width, height, pad, max)
+  const max = Math.max(1, ...trend.businesses, ...trend.users)
+  const axisMax = Math.max(4, Math.ceil(max / 4) * 4)
+  const businessPoints = buildPoints(trend.businesses, width, height, pad, axisMax)
+  const userPoints = buildPoints(trend.users, width, height, pad, axisMax)
   const baseline = height - 26
   const areaPath = `${toLine(businessPoints)} L${businessPoints[businessPoints.length - 1].x.toFixed(1)} ${baseline} L${businessPoints[0].x.toFixed(1)} ${baseline} Z`
-  const gridValues = [0, 4, 8, 12, 16]
+  const gridValues = [0, 1, 2, 3, 4].map((index) => (index * axisMax) / 4)
 
   return (
     <div className="chart-wrap">
@@ -66,7 +114,7 @@ function GrowthChart({ range }: { range: '6m' | '12m' }) {
           </linearGradient>
         </defs>
         {gridValues.map((value) => {
-          const y = pad + (height - pad - 26) - (value / max) * (height - pad - 26)
+          const y = pad + (height - pad - 26) - (value / axisMax) * (height - pad - 26)
           return (
             <g key={value}>
               <line className="chart-grid-line" x1={pad} y1={y} x2={width - pad} y2={y} />
@@ -77,11 +125,11 @@ function GrowthChart({ range }: { range: '6m' | '12m' }) {
           )
         })}
         <path d={areaPath} fill="url(#growth-fill)" />
-        <path d={toLine(userPoints)} fill="none" stroke="#7B61FF" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="1 0" opacity="0.9" />
+        <path d={toLine(userPoints)} fill="none" stroke="#7B61FF" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" opacity="0.9" />
         <path d={toLine(businessPoints)} fill="none" stroke="#1DAB87" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
-        {months.map((month, index) => (
+        {trend.months.map((month, index) => (
           <text
-            key={month}
+            key={`${month}-${index}`}
             className="chart-axis-label"
             x={businessPoints[index].x}
             y={height - 6}
@@ -91,56 +139,110 @@ function GrowthChart({ range }: { range: '6m' | '12m' }) {
           </text>
         ))}
         {businessPoints.map((point, index) => (
-          <circle key={`b-${months[index]}`} cx={point.x} cy={point.y} r={index === businessPoints.length - 1 ? 4.5 : 2.6} fill="#ffffff" stroke="#1DAB87" strokeWidth="2" />
+          <circle key={`b-${index}`} cx={point.x} cy={point.y} r={index === businessPoints.length - 1 ? 4.5 : 2.6} fill="#ffffff" stroke="#1DAB87" strokeWidth="2" />
         ))}
         {userPoints.map((point, index) => (
-          <circle key={`u-${months[index]}`} cx={point.x} cy={point.y} r={index === userPoints.length - 1 ? 4 : 2.3} fill="#ffffff" stroke="#7B61FF" strokeWidth="1.8" />
+          <circle key={`u-${index}`} cx={point.x} cy={point.y} r={index === userPoints.length - 1 ? 4 : 2.3} fill="#ffffff" stroke="#7B61FF" strokeWidth="1.8" />
         ))}
         <text className="chart-value-label" x={businessPoints[businessPoints.length - 1].x - 6} y={businessPoints[businessPoints.length - 1].y - 12} textAnchor="end">
-          {businessSeries[businessSeries.length - 1]} businesses
+          {trend.businesses[trend.businesses.length - 1]} businesses
         </text>
       </svg>
     </div>
   )
 }
 
-const activityIcon: Record<string, IconName> = {
-  Compliance: 'shield',
-  Onboarding: 'businesses',
-  Business: 'edit',
-  Users: 'userPlus',
-}
-
 export function OverviewPage() {
   const toast = useToast()
+  const { user } = useAuth()
+  const { businesses, users, loading, error, refresh } = useData()
   const [range, setRange] = useState<'6m' | '12m'>('12m')
-  const totalBusinesses = businesses.length
-  const activeBusinesses = countByStatus('active')
-  const pendingKyc = countByKyc('pending')
-  const totalUsers = users.length
-  const verified = countByKyc('verified')
-  const rejected = countByKyc('rejected')
-  const unverified = countByKyc('unverified')
-  const admins = users.filter((user) => user.isAdmin).length
-  const newThisMonth = businesses.filter((business) => business.createdAt.startsWith('2026-11')).length
 
-  const verifiedPct = (verified / totalBusinesses) * 100
-  const pendingPct = (pendingKyc / totalBusinesses) * 100
-  const rejectedPct = (rejected / totalBusinesses) * 100
+  const trend = useMemo(() => buildTrend(businesses, users, range), [businesses, range, users])
+
+  if (loading) {
+    return <Card><LoadingState label="Loading dashboard" /></Card>
+  }
+
+  if (error) {
+    return <Card><ErrorState message={error} onRetry={() => void refresh()} /></Card>
+  }
+
+  const totalBusinesses = businesses.length
+  const activeBusinesses = businesses.filter((business) => business.status === 'active').length
+  const pendingKyc = businesses.filter((business) => business.kycStatus === 'pending').length
+  const verified = businesses.filter((business) => business.kycStatus === 'verified').length
+  const rejected = businesses.filter((business) => business.kycStatus === 'rejected').length
+  const unverified = businesses.filter((business) => business.kycStatus === 'unverified').length
+  const totalUsers = users.length
+  const admins = users.filter((item) => item.isAdmin).length
+  const now = new Date()
+  const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  const newThisMonth = businesses.filter((business) => business.createdAt?.startsWith(monthKey)).length
+  const countySet = new Set(businesses.map((business) => business.county).filter(Boolean))
+
+  const verifiedPct = totalBusinesses ? (verified / totalBusinesses) * 100 : 0
+  const pendingPct = totalBusinesses ? (pendingKyc / totalBusinesses) * 100 : 0
+  const rejectedPct = totalBusinesses ? (rejected / totalBusinesses) * 100 : 0
   const verifiedAngle = verifiedPct
   const pendingAngle = verifiedPct + pendingPct
   const rejectedAngle = pendingAngle + rejectedPct
 
   const queue = businesses
     .filter((business) => business.kycStatus === 'pending')
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
 
   const countyCounts = businesses.reduce<Record<string, number>>((accumulator, business) => {
-    accumulator[business.county] = (accumulator[business.county] ?? 0) + 1
+    const county = business.county ?? 'Unknown'
+    accumulator[county] = (accumulator[county] ?? 0) + 1
     return accumulator
   }, {})
   const topCounties = Object.entries(countyCounts)
     .sort(([, a], [, b]) => b - a)
+    .slice(0, 5)
+
+  const activity: ActivityItem[] = [
+    ...businesses
+      .filter((business) => business.kycStatus === 'verified')
+      .slice(0, 3)
+      .map((business): ActivityItem => ({
+        id: `kyc-${business.id}`,
+        actor: 'Compliance team',
+        action: 'verified KYC for',
+        target: business.name,
+        meta: 'Compliance',
+        time: business.updatedAt ?? business.createdAt ?? new Date().toISOString(),
+        tone: 'green',
+        icon: 'shield',
+      })),
+    ...businesses
+      .filter((business) => business.status === 'pending')
+      .slice(0, 3)
+      .map((business): ActivityItem => ({
+        id: `business-${business.id}`,
+        actor: 'System',
+        action: 'received a new business application from',
+        target: business.name,
+        meta: 'Onboarding',
+        time: business.createdAt ?? new Date().toISOString(),
+        tone: 'blue',
+        icon: 'businesses',
+      })),
+    ...users
+      .filter((item) => item.isAdmin && item.adminActivatedAt)
+      .slice(0, 3)
+      .map((item): ActivityItem => ({
+        id: `admin-${item.id}`,
+        actor: 'Admin team',
+        action: 'granted console access to',
+        target: item.name,
+        meta: 'Users',
+        time: item.adminActivatedAt ?? item.updatedAt ?? new Date().toISOString(),
+        tone: 'purple',
+        icon: 'userPlus',
+      })),
+  ]
+    .sort((a, b) => b.time.localeCompare(a.time))
     .slice(0, 5)
 
   const today = new Date().toLocaleDateString('en-GB', {
@@ -157,14 +259,14 @@ export function OverviewPage() {
       icon: 'businesses' as IconName,
       tone: 'green',
       trend: `${newThisMonth} this month`,
-      foot: 'Across 8 counties',
+      foot: `Across ${countySet.size} counties`,
     },
     {
       label: 'Active businesses',
       value: activeBusinesses,
       icon: 'activity' as IconName,
       tone: 'blue',
-      trend: `${Math.round((activeBusinesses / totalBusinesses) * 100)}% of total`,
+      trend: `${totalBusinesses ? Math.round((activeBusinesses / totalBusinesses) * 100) : 0}% of total`,
       foot: 'Transacting on QCash',
     },
     {
@@ -190,11 +292,15 @@ export function OverviewPage() {
       <div className="overview-top">
         <div>
           <span className="eyebrow">Dashboard</span>
-          <h1>Welcome back, {currentAdmin.name.split(' ')[0]}</h1>
+          <h1>Welcome back, {user?.name.split(' ')[0] ?? 'admin'}</h1>
           <p>{today} · Here&apos;s what&apos;s happening across the QCash network.</p>
         </div>
         <div className="overview-actions">
-          <Button variant="secondary" iconLeft="download" onClick={() => toast('Report export queued (design preview).', 'info')}>
+          <Button
+            variant="secondary"
+            iconLeft="download"
+            onClick={() => toast('Export is not available through the admin API.', 'info')}
+          >
             Export
           </Button>
           <Button iconLeft="shield" onClick={() => navigate('/businesses')}>
@@ -237,7 +343,7 @@ export function OverviewPage() {
               />
             }
           />
-          <GrowthChart range={range} />
+          <GrowthChart trend={trend} />
         </Card>
 
         <Card className="donut-card">
@@ -309,32 +415,36 @@ export function OverviewPage() {
             }
           />
           <div className="queue-list">
-            {queue.map((business) => (
-              <div key={business.id} className="queue-item">
-                <Avatar name={business.name} size={40} />
-                <div className="queue-item__meta">
-                  <strong>{business.name}</strong>
-                  <span>
-                    {business.businessType} · {business.town}, {business.county}
-                  </span>
+            {queue.length ? (
+              queue.slice(0, 5).map((business) => (
+                <div key={business.id} className="queue-item">
+                  <Avatar name={business.name} size={40} />
+                  <div className="queue-item__meta">
+                    <strong>{business.name}</strong>
+                    <span>
+                      {business.businessType} · {business.town ?? business.ward ?? '—'}, {business.county ?? '—'}
+                    </span>
+                  </div>
+                  <div className="queue-item__right">
+                    <span className="hide-mobile">
+                      <KycBadge status={business.kycStatus} />
+                    </span>
+                    <Button size="sm" variant="subtle" onClick={() => navigate(`/businesses/${business.id}`)}>
+                      Review
+                    </Button>
+                  </div>
                 </div>
-                <div className="queue-item__right">
-                  <span className="hide-mobile">
-                    <KycBadge status={business.kycStatus} />
-                  </span>
-                  <Button size="sm" variant="subtle" onClick={() => navigate(`/businesses/${business.id}`)}>
-                    Review
-                  </Button>
-                </div>
-              </div>
-            ))}
+              ))
+            ) : (
+              <p className="muted">There are no KYC submissions waiting for review.</p>
+            )}
           </div>
         </Card>
 
         <Card>
           <CardHeader
             title="Recent activity"
-            subtitle="Latest actions across the console"
+            subtitle="Latest records across the console"
             action={
               <button type="button" className="auth__link" onClick={() => navigate('/notifications')}>
                 View all
@@ -342,21 +452,25 @@ export function OverviewPage() {
             }
           />
           <div className="activity-list">
-            {activityFeed.slice(0, 5).map((item) => (
-              <div key={item.id} className="activity-item">
-                <span className="activity-item__dot" data-tone={item.tone}>
-                  <Icon name={activityIcon[item.meta] ?? 'activity'} size={15} />
-                </span>
-                <div className="activity-item__body">
-                  <p>
-                    <strong>{item.actor}</strong> {item.action} <strong>{item.target}</strong>
-                  </p>
-                  <span>
-                    {item.meta} · {timeAgo(item.time)}
+            {activity.length ? (
+              activity.map((item) => (
+                <div key={item.id} className="activity-item">
+                  <span className="activity-item__dot" data-tone={item.tone}>
+                    <Icon name={item.icon} size={15} />
                   </span>
+                  <div className="activity-item__body">
+                    <p>
+                      <strong>{item.actor}</strong> {item.action} <strong>{item.target}</strong>
+                    </p>
+                    <span>
+                      {item.meta} · {timeAgo(item.time)}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))
+            ) : (
+              <p className="muted">No recent activity is available.</p>
+            )}
           </div>
         </Card>
       </div>
@@ -365,17 +479,21 @@ export function OverviewPage() {
         <Card>
           <CardHeader title="Coverage by county" subtitle="Where QCash businesses are operating" />
           <div className="county-list">
-            {topCounties.map(([county, count]) => (
-              <div key={county} className="county-row">
-                <div className="county-row__top">
-                  <strong>{county}</strong>
-                  <span>
-                    {count} {count === 1 ? 'business' : 'businesses'}
-                  </span>
+            {topCounties.length ? (
+              topCounties.map(([county, count]) => (
+                <div key={county} className="county-row">
+                  <div className="county-row__top">
+                    <strong>{county}</strong>
+                    <span>
+                      {count} {count === 1 ? 'business' : 'businesses'}
+                    </span>
+                  </div>
+                  <ProgressBar value={totalBusinesses ? (count / totalBusinesses) * 100 : 0} />
                 </div>
-                <ProgressBar value={(count / totalBusinesses) * 100} />
-              </div>
-            ))}
+              ))
+            ) : (
+              <p className="muted">No businesses are available yet.</p>
+            )}
           </div>
           <div className="mini-stats">
             <div className="mini-stat">
@@ -383,8 +501,8 @@ export function OverviewPage() {
               <span>Wallet balances held</span>
             </div>
             <div className="mini-stat">
-              <strong>{formatKES(businesses.reduce((sum, business) => sum + business.monthlyInflowMinor, 0), { compact: true })}</strong>
-              <span>Monthly inflow tracked</span>
+              <strong>{businesses.filter((business) => business.collectionAccount).length}</strong>
+              <span>Collection accounts linked</span>
             </div>
           </div>
         </Card>
@@ -395,7 +513,7 @@ export function OverviewPage() {
             subtitle="Account and access health"
             action={
               <Badge tone="green" dot>
-                All systems normal
+                Live data
               </Badge>
             }
           />
@@ -405,7 +523,7 @@ export function OverviewPage() {
               <span>New businesses this month</span>
             </div>
             <div className="mini-stat">
-              <strong>{countByStatus('suspended')}</strong>
+              <strong>{businesses.filter((business) => business.status === 'suspended').length}</strong>
               <span>Suspended businesses</span>
             </div>
             <div className="mini-stat">
@@ -413,7 +531,7 @@ export function OverviewPage() {
               <span>Active administrators</span>
             </div>
             <div className="mini-stat">
-              <strong>{countByStatus('closed')}</strong>
+              <strong>{businesses.filter((business) => business.status === 'closed').length}</strong>
               <span>Closed accounts</span>
             </div>
           </div>

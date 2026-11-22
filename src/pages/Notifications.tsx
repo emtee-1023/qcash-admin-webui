@@ -117,8 +117,8 @@ export function NotificationsPage() {
       <div className="inline-alert inline-alert--info" style={{ marginTop: 16 }}>
         <Icon name="info" size={15} />
         <span>
-          Notifications are a design preview. Delivery preferences can be managed from your
-          profile settings.
+          Alerts are derived from live business and user records. Read state is stored on this
+          device only.
         </span>
       </div>
     </>

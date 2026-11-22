@@ -1,34 +1,52 @@
 import { useState } from 'react'
 import { useToast } from '../components/toast-context'
-import { AdminBadge, Avatar, Badge, Button, Card, EmptyState, IconButton, PageHeader, Pagination, SearchField, Segmented, Select } from '../components/ui'
-import { currentAdmin, users as seedUsers } from '../data/mock'
-import { formatDate, formatDateTime } from '../lib/format'
+import {
+  AdminBadge,
+  Avatar,
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  ErrorState,
+  IconButton,
+  LoadingState,
+  PageHeader,
+  Pagination,
+  SearchField,
+  Segmented,
+} from '../components/ui'
+import { useAuth } from '../components/auth-context'
+import { useData } from '../components/data-context'
+import { api } from '../lib/api'
+import { mapUser } from '../data/mappers'
+import type { AdminUser } from '../data/types'
+import { formatDate, titleCase } from '../lib/format'
 import { navigate } from '../lib/router'
 
 const pageSize = 8
 
 export function UsersPage() {
   const toast = useToast()
-  const [rows, setRows] = useState(seedUsers)
+  const { user: currentUser } = useAuth()
+  const { users, loading, error, refresh, applyUser } = useData()
   const [query, setQuery] = useState('')
   const [role, setRole] = useState('all')
-  const [status, setStatus] = useState('all')
   const [page, setPage] = useState(1)
+  const [busyId, setBusyId] = useState<number | null>(null)
 
-  const admins = rows.filter((user) => user.isAdmin).length
+  const admins = users.filter((user) => user.isAdmin).length
 
-  const filtered = rows.filter((user) => {
+  const filtered = users.filter((user) => {
     const search = query.trim().toLowerCase()
     const matchesSearch =
       !search ||
       user.name.toLowerCase().includes(search) ||
       (user.email ?? '').toLowerCase().includes(search) ||
-      user.phone.toLowerCase().includes(search) ||
-      user.identificationNumber.toLowerCase().includes(search)
+      (user.phone ?? '').toLowerCase().includes(search) ||
+      (user.identificationNumber ?? '').toLowerCase().includes(search)
     const matchesRole =
       role === 'all' || (role === 'admins' ? user.isAdmin : !user.isAdmin)
-    const matchesStatus = status === 'all' || user.status === status
-    return matchesSearch && matchesRole && matchesStatus
+    return matchesSearch && matchesRole
   })
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
@@ -36,41 +54,34 @@ export function UsersPage() {
   const paged = filtered.slice((safePage - 1) * pageSize, safePage * pageSize)
   const rangeStart = filtered.length === 0 ? 0 : (safePage - 1) * pageSize + 1
   const rangeEnd = Math.min(filtered.length, safePage * pageSize)
-  const filtersActive = query !== '' || role !== 'all' || status !== 'all'
+  const filtersActive = query !== '' || role !== 'all'
 
   function resetFilters() {
     setQuery('')
     setRole('all')
-    setStatus('all')
     setPage(1)
   }
 
-  function toggleAdmin(id: number) {
-    const user = rows.find((item) => item.id === id)
-    if (!user) return
-    if (id === currentAdmin.id && user.isAdmin) {
-      toast('You cannot revoke your own admin access.', 'error')
-      return
+  async function toggleAdmin(user: AdminUser) {
+    if (user.id === currentUser?.id) return
+    setBusyId(user.id)
+    try {
+      const response = user.isAdmin
+        ? await api.revokeAdmin(user.id)
+        : await api.grantAdmin(user.id)
+      applyUser(mapUser(response.data))
+      toast(
+        response.message ||
+          (user.isAdmin
+            ? `Admin access revoked for ${user.name}.`
+            : `Admin access granted to ${user.name}.`),
+        user.isAdmin ? 'info' : 'success',
+      )
+    } catch (caught) {
+      toast((caught as Error).message || 'Unable to update admin access.', 'error')
+    } finally {
+      setBusyId(null)
     }
-    const nextAdmin = !user.isAdmin
-    setRows((current) =>
-      current.map((item) =>
-        item.id === id
-          ? {
-              ...item,
-              isAdmin: nextAdmin,
-              role: nextAdmin ? 'Admin' : 'Customer',
-              adminActivatedAt: nextAdmin ? new Date().toISOString() : null,
-            }
-          : item,
-      ),
-    )
-    toast(
-      nextAdmin
-        ? `Admin access granted to ${user.name}.`
-        : `Admin access revoked for ${user.name}.`,
-      nextAdmin ? 'success' : 'info',
-    )
   }
 
   return (
@@ -84,11 +95,18 @@ export function UsersPage() {
             <Button
               variant="secondary"
               iconLeft="download"
-              onClick={() => toast('User export queued (design preview).', 'info')}
+              onClick={() => toast('Export is not available through the admin API.', 'info')}
             >
               Export
             </Button>
-            <Button iconLeft="shield" onClick={() => { setRole('admins'); setPage(1) }}>
+            <Button
+              iconLeft="shield"
+              disabled={loading}
+              onClick={() => {
+                setRole('admins')
+                setPage(1)
+              }}
+            >
               Manage admins ({admins})
             </Button>
           </>
@@ -117,20 +135,6 @@ export function UsersPage() {
             { value: 'customers', label: 'Customers' },
           ]}
         />
-        <div className="toolbar__select">
-          <Select
-            aria-label="Filter by account status"
-            value={status}
-            onChange={(event) => {
-              setStatus(event.target.value)
-              setPage(1)
-            }}
-          >
-            <option value="all">All statuses</option>
-            <option value="active">Active</option>
-            <option value="suspended">Suspended</option>
-          </Select>
-        </div>
         {filtersActive && (
           <button type="button" className="toolbar__reset" onClick={resetFilters}>
             Reset
@@ -143,7 +147,11 @@ export function UsersPage() {
       </div>
 
       <Card className="table-card" padded={false}>
-        {filtered.length === 0 ? (
+        {loading ? (
+          <LoadingState label="Loading users" />
+        ) : error ? (
+          <ErrorState message={error} onRetry={() => void refresh()} />
+        ) : filtered.length === 0 ? (
           <EmptyState
             icon="users"
             title="No users found"
@@ -165,9 +173,9 @@ export function UsersPage() {
                       <th>Phone</th>
                       <th>Businesses</th>
                       <th>Access</th>
-                      <th>Status</th>
+                      <th>Verification</th>
                       <th>Joined</th>
-                      <th>Last active</th>
+                      <th>Last updated</th>
                       <th aria-label="Actions" />
                     </tr>
                   </thead>
@@ -184,7 +192,7 @@ export function UsersPage() {
                             <div className="table-user__meta">
                               <strong>
                                 {user.name}
-                                {user.id === currentAdmin.id && (
+                                {user.id === currentUser?.id && (
                                   <span style={{ color: 'var(--muted)', fontWeight: 500 }}> (you)</span>
                                 )}
                               </strong>
@@ -192,7 +200,7 @@ export function UsersPage() {
                             </div>
                           </div>
                         </td>
-                        <td className="nowrap">{user.phone}</td>
+                        <td className="nowrap">{user.phone ?? '—'}</td>
                         <td>{user.businessesCount}</td>
                         <td>
                           <AdminBadge role={user.role} />
@@ -203,21 +211,26 @@ export function UsersPage() {
                           )}
                         </td>
                         <td>
-                          <Badge tone={user.status === 'active' ? 'green' : 'red'} dot>
-                            {user.status}
-                          </Badge>
+                          <div className="row wrap" style={{ gap: 4 }}>
+                            <Badge tone={user.phoneVerifiedAt ? 'green' : 'gray'} dot>
+                              Phone
+                            </Badge>
+                            <Badge tone={user.emailVerifiedAt ? 'green' : 'gray'} dot>
+                              Email
+                            </Badge>
+                          </div>
                         </td>
                         <td className="nowrap">{formatDate(user.createdAt)}</td>
                         <td className="nowrap" style={{ color: 'var(--muted)' }}>
-                          {formatDateTime(user.lastActiveAt).split(' · ')[0]}
+                          {formatDate(user.updatedAt)}
                         </td>
                         <td>
                           <div className="table-actions" onClick={(event) => event.stopPropagation()}>
                             <Button
                               size="sm"
                               variant={user.isAdmin ? 'danger' : 'subtle'}
-                              disabled={user.id === currentAdmin.id}
-                              onClick={() => toggleAdmin(user.id)}
+                              disabled={user.id === currentUser?.id || busyId === user.id}
+                              onClick={() => void toggleAdmin(user)}
                             >
                               {user.isAdmin ? 'Revoke' : 'Grant admin'}
                             </Button>
@@ -243,25 +256,23 @@ export function UsersPage() {
                       <Avatar name={user.name} size={40} />
                       <div className="table-user__meta">
                         <strong>{user.name}</strong>
-                        <span>{user.email ?? user.phone}</span>
+                        <span>{user.email ?? user.phone ?? 'No contact details'}</span>
                       </div>
                     </div>
-                    <Badge tone={user.status === 'active' ? 'green' : 'red'} dot>
-                      {user.status}
-                    </Badge>
+                    <AdminBadge role={user.role} />
                   </div>
                   <div className="mobile-card__stats">
-                    <span>
-                      Access
-                      <AdminBadge role={user.role} />
-                    </span>
                     <span>
                       Businesses
                       <strong>{user.businessesCount}</strong>
                     </span>
                     <span>
                       Phone
-                      <strong>{user.phone}</strong>
+                      <strong>{user.phone ?? '—'}</strong>
+                    </span>
+                    <span>
+                      ID type
+                      <strong>{user.idType ? titleCase(user.idType) : 'Not provided'}</strong>
                     </span>
                     <span>
                       Joined
@@ -275,8 +286,8 @@ export function UsersPage() {
                     <Button
                       size="sm"
                       variant={user.isAdmin ? 'danger' : 'subtle'}
-                      disabled={user.id === currentAdmin.id}
-                      onClick={() => toggleAdmin(user.id)}
+                      disabled={user.id === currentUser?.id || busyId === user.id}
+                      onClick={() => void toggleAdmin(user)}
                     >
                       {user.isAdmin ? 'Revoke' : 'Grant admin'}
                     </Button>

@@ -1,7 +1,24 @@
 import { useState } from 'react'
 import { useToast } from '../components/toast-context'
-import { Avatar, Button, Card, EmptyState, IconButton, KycBadge, PageHeader, Pagination, SearchField, Select, StatusBadge } from '../components/ui'
-import { businesses as seedBusinesses, countByKyc, type BusinessStatus, type KycStatus } from '../data/mock'
+import {
+  Avatar,
+  Button,
+  Card,
+  EmptyState,
+  ErrorState,
+  IconButton,
+  KycBadge,
+  LoadingState,
+  PageHeader,
+  Pagination,
+  SearchField,
+  Select,
+  StatusBadge,
+} from '../components/ui'
+import { useData } from '../components/data-context'
+import { api, type BusinessStatus, type KycStatus } from '../lib/api'
+import { mapBusinessDetail } from '../data/mappers'
+import type { Business } from '../data/types'
 import { formatDate, formatKES } from '../lib/format'
 import { navigate } from '../lib/router'
 
@@ -9,27 +26,27 @@ const pageSize = 8
 
 export function BusinessesPage() {
   const toast = useToast()
-  const [rows, setRows] = useState(seedBusinesses)
+  const { businesses, businessTypes, loading, error, refresh, applyBusiness } = useData()
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('all')
   const [kyc, setKyc] = useState('all')
   const [type, setType] = useState('all')
   const [page, setPage] = useState(1)
+  const [busyId, setBusyId] = useState<number | null>(null)
 
-  const typeOptions = Array.from(new Set(seedBusinesses.map((business) => business.businessType))).sort()
+  const typeOptions = businessTypes.map((item) => item.name).sort()
 
-  const filtered = rows.filter((business) => {
+  const filtered = businesses.filter((business) => {
     const search = query.trim().toLowerCase()
     const matchesSearch =
       !search ||
       business.name.toLowerCase().includes(search) ||
       business.publicId.toLowerCase().includes(search) ||
       business.businessType.toLowerCase().includes(search) ||
-      business.county.toLowerCase().includes(search) ||
-      business.owners.some(
-        (owner) =>
-          owner.name.toLowerCase().includes(search) || owner.phone.toLowerCase().includes(search),
-      )
+      (business.county ?? '').toLowerCase().includes(search) ||
+      (business.town ?? '').toLowerCase().includes(search) ||
+      (business.phone ?? '').toLowerCase().includes(search) ||
+      (business.email ?? '').toLowerCase().includes(search)
     const matchesStatus = status === 'all' || business.status === status
     const matchesKyc = kyc === 'all' || business.kycStatus === kyc
     const matchesType = type === 'all' || business.businessType === type
@@ -42,7 +59,7 @@ export function BusinessesPage() {
   const rangeStart = filtered.length === 0 ? 0 : (safePage - 1) * pageSize + 1
   const rangeEnd = Math.min(filtered.length, safePage * pageSize)
   const filtersActive = query !== '' || status !== 'all' || kyc !== 'all' || type !== 'all'
-  const pendingKyc = countByKyc('pending')
+  const pendingKyc = businesses.filter((business) => business.kycStatus === 'pending').length
 
   function resetFilters() {
     setQuery('')
@@ -52,26 +69,37 @@ export function BusinessesPage() {
     setPage(1)
   }
 
-  function approveKyc(id: number) {
-    setRows((current) =>
-      current.map((business) =>
-        business.id === id ? { ...business, kycStatus: 'verified' as KycStatus } : business,
-      ),
-    )
-    toast('KYC verified. The business can now transact.', 'success')
+  async function approveKyc(business: Business) {
+    setBusyId(business.id)
+    try {
+      const response = await api.updateBusinessKycStatus(business.id, {
+        kyc_status: 'verified' satisfies KycStatus,
+      })
+      applyBusiness(mapBusinessDetail(response.data))
+      toast('KYC verified. The business can now transact.', 'success')
+    } catch (caught) {
+      toast((caught as Error).message || 'Unable to verify KYC.', 'error')
+    } finally {
+      setBusyId(null)
+    }
   }
 
-  function toggleStatus(id: number) {
-    const business = rows.find((item) => item.id === id)
-    if (!business) return
-    const nextStatus: BusinessStatus = business.status === 'suspended' ? 'active' : 'suspended'
-    setRows((current) =>
-      current.map((item) => (item.id === id ? { ...item, status: nextStatus } : item)),
-    )
-    toast(
-      nextStatus === 'suspended' ? 'Business suspended.' : 'Business reactivated.',
-      nextStatus === 'suspended' ? 'info' : 'success',
-    )
+  async function toggleStatus(business: Business) {
+    const nextStatus: BusinessStatus =
+      business.status === 'suspended' ? 'active' : 'suspended'
+    setBusyId(business.id)
+    try {
+      const response = await api.updateBusinessStatus(business.id, { status: nextStatus })
+      applyBusiness(mapBusinessDetail(response.data))
+      toast(
+        nextStatus === 'suspended' ? 'Business suspended.' : 'Business reactivated.',
+        nextStatus === 'suspended' ? 'info' : 'success',
+      )
+    } catch (caught) {
+      toast((caught as Error).message || 'Unable to update business status.', 'error')
+    } finally {
+      setBusyId(null)
+    }
   }
 
   return (
@@ -85,11 +113,18 @@ export function BusinessesPage() {
             <Button
               variant="secondary"
               iconLeft="download"
-              onClick={() => toast('Business export queued (design preview).', 'info')}
+              onClick={() => toast('Export is not available through the admin API.', 'info')}
             >
               Export
             </Button>
-            <Button iconLeft="shield" onClick={() => { setKyc('pending'); setPage(1) }}>
+            <Button
+              iconLeft="shield"
+              disabled={loading}
+              onClick={() => {
+                setKyc('pending')
+                setPage(1)
+              }}
+            >
               Review KYC {pendingKyc > 0 ? `(${pendingKyc})` : ''}
             </Button>
           </>
@@ -104,7 +139,7 @@ export function BusinessesPage() {
             setQuery(value)
             setPage(1)
           }}
-          placeholder="Search by business, owner, phone or ID…"
+          placeholder="Search by business, phone, email or ID…"
         />
         <div className="toolbar__select">
           <Select
@@ -167,7 +202,11 @@ export function BusinessesPage() {
       </div>
 
       <Card className="table-card" padded={false}>
-        {filtered.length === 0 ? (
+        {loading ? (
+          <LoadingState label="Loading businesses" />
+        ) : error ? (
+          <ErrorState message={error} onRetry={() => void refresh()} />
+        ) : filtered.length === 0 ? (
           <EmptyState
             icon="businesses"
             title="No businesses found"
@@ -215,14 +254,16 @@ export function BusinessesPage() {
                           <div className="cell-strong" style={{ fontSize: '0.79rem' }}>
                             {business.businessType}
                           </div>
-                          <span style={{ fontSize: '0.71rem', color: 'var(--muted)' }}>
-                            {business.businessCategory}
-                          </span>
+                          {business.businessCategory && (
+                            <span style={{ fontSize: '0.71rem', color: 'var(--muted)' }}>
+                              {business.businessCategory}
+                            </span>
+                          )}
                         </td>
                         <td>
-                          {business.town}
+                          {business.town ?? business.ward ?? '—'}
                           <div style={{ fontSize: '0.71rem', color: 'var(--muted)' }}>
-                            {business.county}
+                            {business.county ?? 'County not set'}
                           </div>
                         </td>
                         <td>
@@ -236,7 +277,12 @@ export function BusinessesPage() {
                         <td>
                           <div className="table-actions" onClick={(event) => event.stopPropagation()}>
                             {business.kycStatus === 'pending' && (
-                              <Button size="sm" variant="success" onClick={() => approveKyc(business.id)}>
+                              <Button
+                                size="sm"
+                                variant="success"
+                                disabled={busyId === business.id}
+                                onClick={() => void approveKyc(business)}
+                              >
                                 Approve
                               </Button>
                             )}
@@ -247,7 +293,8 @@ export function BusinessesPage() {
                                   ? 'Reactivate business'
                                   : 'Suspend business'
                               }
-                              onClick={() => toggleStatus(business.id)}
+                              disabled={busyId === business.id}
+                              onClick={() => void toggleStatus(business)}
                             />
                             <IconButton
                               icon="eye"
@@ -287,7 +334,7 @@ export function BusinessesPage() {
                     </span>
                     <span>
                       Location
-                      <strong>{business.town}</strong>
+                      <strong>{business.town ?? business.ward ?? '—'}</strong>
                     </span>
                     <span>
                       Joined
@@ -296,11 +343,20 @@ export function BusinessesPage() {
                   </div>
                   <div className="mobile-card__actions">
                     {business.kycStatus === 'pending' && (
-                      <Button size="sm" variant="success" onClick={() => approveKyc(business.id)}>
+                      <Button
+                        size="sm"
+                        variant="success"
+                        disabled={busyId === business.id}
+                        onClick={() => void approveKyc(business)}
+                      >
                         Approve KYC
                       </Button>
                     )}
-                    <Button size="sm" variant="secondary" onClick={() => navigate(`/businesses/${business.id}`)}>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => navigate(`/businesses/${business.id}`)}
+                    >
                       View business
                     </Button>
                   </div>
