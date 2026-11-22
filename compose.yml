@@ -1,0 +1,15 @@
+services:
+  admin:
+    build:
+      context: .
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+    image: qcash-admin:latest
+    container_name: qcash-admin
+    restart: unless-stopped
+    networks:
+      - web-proxy
+
+networks:
+  web-proxy:
+    external: true
