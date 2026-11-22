@@ -1,122 +1,78 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import { useEffect, useState } from 'react'
+import { AppShell } from './components/AppShell'
+import { ToastProvider } from './components/toast'
+import { ThemeProvider } from './components/theme-provider'
+import { NotificationProvider } from './components/notification-provider'
+import { matchRoute, navigate, useHashRoute } from './lib/router'
+import { LoginPage } from './pages/Login'
+import { ActivatePage } from './pages/Activate'
+import { OverviewPage } from './pages/Overview'
+import { BusinessesPage } from './pages/Businesses'
+import { BusinessDetailPage } from './pages/BusinessDetail'
+import { UsersPage } from './pages/Users'
+import { UserDetailPage } from './pages/UserDetail'
+import { NotificationsPage } from './pages/Notifications'
+import { ProfilePage } from './pages/Profile'
 
-function App() {
-  const [count, setCount] = useState(0)
+const SESSION_KEY = 'qcash-admin-preview'
+
+function AdminApplication() {
+  const path = useHashRoute()
+  const [authenticated, setAuthenticated] = useState(
+    () => window.sessionStorage.getItem(SESSION_KEY) === '1',
+  )
+  const { clean, segments } = matchRoute(path)
+  const root = segments[0] ?? 'login'
+  const isAuthRoute = root === 'login' || root === 'activate'
+
+  useEffect(() => {
+    if (authenticated && isAuthRoute) navigate('/overview')
+  }, [authenticated, isAuthRoute])
+
+  function handleSignIn() {
+    window.sessionStorage.setItem(SESSION_KEY, '1')
+    setAuthenticated(true)
+    navigate('/overview')
+  }
+
+  function handleLogout() {
+    window.sessionStorage.removeItem(SESSION_KEY)
+    setAuthenticated(false)
+    navigate('/login')
+  }
+
+  if (!authenticated) {
+    if (root === 'activate') return <ActivatePage />
+    return <LoginPage onSignIn={handleSignIn} />
+  }
+
+  let page = <OverviewPage />
+
+  if (root === 'businesses') {
+    page = segments[1] ? <BusinessDetailPage id={Number(segments[1])} /> : <BusinessesPage />
+  } else if (root === 'users') {
+    page = segments[1] ? <UserDetailPage id={Number(segments[1])} /> : <UsersPage />
+  } else if (root === 'notifications') {
+    page = <NotificationsPage />
+  } else if (root === 'profile') {
+    page = <ProfilePage onLogout={handleLogout} />
+  }
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+    <AppShell path={isAuthRoute ? '/overview' : clean} onLogout={handleLogout}>
+      {page}
+    </AppShell>
   )
 }
 
-export default App
+export default function App() {
+  return (
+    <ThemeProvider>
+      <ToastProvider>
+        <NotificationProvider>
+          <AdminApplication />
+        </NotificationProvider>
+      </ToastProvider>
+    </ThemeProvider>
+  )
+}
