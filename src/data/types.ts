@@ -71,6 +71,64 @@ export type AdminUser = {
   updatedAt: string | null
 }
 
+export type LendingSummary = {
+  loansCount: number
+  disbursedLoansCount: number
+  activeLoansCount: number
+  overdueLoansCount: number
+  settledLoansCount: number
+  defaultedLoansCount: number
+  principalMinor: number
+  disbursedPrincipalMinor: number
+  feesMinor: number
+  totalRepayableMinor: number
+  repaidMinor: number
+  feeRepaidMinor: number
+  principalRepaidMinor: number
+  outstandingMinor: number
+  averageAprBps: number
+  weightedAprBps: number
+}
+
+export type Loan = {
+  id: number
+  publicId: string
+  businessId: number
+  principalMinor: number
+  feeMinor: number
+  totalRepayableMinor: number
+  amountRepaidMinor: number
+  feeRepaidMinor: number
+  principalRepaidMinor: number
+  outstandingMinor: number
+  recoveryRateBps: number
+  maximumRepaymentDays: number
+  aprBps: number
+  status: string | null
+  disbursedAt: string | null
+  dueAt: string | null
+  settledAt: string | null
+  createdAt: string | null
+}
+
+export type LendingBusiness = {
+  businessId: number
+  publicId: string
+  name: string
+  status: string | null
+  summary: LendingSummary
+}
+
+export type LendingOverview = {
+  summary: LendingSummary
+  businesses: LendingBusiness[]
+}
+
+export type BusinessLending = {
+  summary: LendingSummary
+  loans: Loan[]
+}
+
 export type NotificationItem = {
   id: number
   title: string

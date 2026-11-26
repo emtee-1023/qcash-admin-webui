@@ -3,13 +3,14 @@ import type {
   BusinessTypeResource,
   CountyResource,
 } from '../lib/api'
-import type { AdminUser, Business } from '../data/types'
+import type { AdminUser, Business, LendingOverview } from '../data/types'
 
 export type DataContextValue = {
   businesses: Business[]
   users: AdminUser[]
   businessTypes: BusinessTypeResource[]
   counties: CountyResource[]
+  lending: LendingOverview | null
   loading: boolean
   refreshing: boolean
   error: string | null

@@ -13,6 +13,7 @@ import { ActivatePage } from './pages/Activate'
 import { OverviewPage } from './pages/Overview'
 import { BusinessesPage } from './pages/Businesses'
 import { BusinessDetailPage } from './pages/BusinessDetail'
+import { LendingPage } from './pages/Lending'
 import { UsersPage } from './pages/Users'
 import { UserDetailPage } from './pages/UserDetail'
 import { NotificationsPage } from './pages/Notifications'
@@ -54,6 +55,8 @@ function AdminApplication() {
 
   if (root === 'businesses') {
     page = segments[1] ? <BusinessDetailPage id={Number(segments[1])} /> : <BusinessesPage />
+  } else if (root === 'lending') {
+    page = <LendingPage />
   } else if (root === 'users') {
     page = segments[1] ? <UserDetailPage id={Number(segments[1])} /> : <UsersPage />
   } else if (root === 'notifications') {

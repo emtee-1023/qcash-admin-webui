@@ -18,6 +18,7 @@ const navSections: Array<{
     items: [
       { to: '/overview', label: 'Overview', icon: 'overview' },
       { to: '/businesses', label: 'Businesses', icon: 'businesses' },
+      { to: '/lending', label: 'Lending', icon: 'banknote' },
       { to: '/users', label: 'Users', icon: 'users' },
     ],
   },
@@ -33,6 +34,7 @@ const navSections: Array<{
 const pageMeta: Record<string, { section: string; title: string }> = {
   overview: { section: 'Workspace', title: 'Overview' },
   businesses: { section: 'Workspace', title: 'Businesses' },
+  lending: { section: 'Finance', title: 'Lending' },
   users: { section: 'Workspace', title: 'Users' },
   notifications: { section: 'Account', title: 'Notifications' },
   profile: { section: 'Account', title: 'My profile' },

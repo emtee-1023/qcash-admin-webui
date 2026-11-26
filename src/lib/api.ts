@@ -133,6 +133,64 @@ export type AdminBusinessDetailResource = BusinessResource & {
   payment_accounts: PaymentAccountResource[]
 }
 
+export type LendingSummaryResource = {
+  loans_count: number
+  disbursed_loans_count: number
+  active_loans_count: number
+  overdue_loans_count: number
+  settled_loans_count: number
+  defaulted_loans_count: number
+  principal_minor: number
+  disbursed_principal_minor: number
+  fees_minor: number
+  total_repayable_minor: number
+  repaid_minor: number
+  fee_repaid_minor: number
+  principal_repaid_minor: number
+  outstanding_minor: number
+  average_apr_bps: number
+  weighted_apr_bps: number
+}
+
+export type LoanLendingResource = {
+  id: number
+  public_id: string
+  business_id: number
+  principal_amount_minor: number
+  fee_amount_minor: number
+  total_repayable_minor: number
+  amount_repaid_minor: number
+  fee_repaid_minor: number
+  principal_repaid_minor: number
+  outstanding_balance_minor: number
+  recovery_rate_bps: number
+  maximum_repayment_days: number
+  apr_bps: number
+  status: string | null
+  disbursed_at: string | null
+  due_at: string | null
+  settled_at: string | null
+  created_at: string | null
+}
+
+export type LendingBusinessResource = {
+  business_id: number
+  public_id: string
+  business_name: string
+  status: string | null
+  summary: LendingSummaryResource
+}
+
+export type LendingOverviewResource = {
+  summary: LendingSummaryResource
+  businesses: LendingBusinessResource[]
+}
+
+export type BusinessLendingResource = {
+  summary: LendingSummaryResource
+  advances: LoanLendingResource[]
+}
+
 export type AdminUserResource = {
   id: number
   name: string
@@ -311,6 +369,11 @@ export const api = {
 
   getBusiness: (id: number) =>
     request<DataResponse<AdminBusinessDetailResource>>(`/admin/businesses/${id}`),
+
+  getLending: () => request<LendingOverviewResource>('/admin/lending'),
+
+  getBusinessLending: (id: number) =>
+    request<BusinessLendingResource>(`/admin/businesses/${id}/lending`),
 
   updateBusiness: (id: number, body: UpdateBusinessRequest) =>
     request<DataResponse<AdminBusinessDetailResource>>(`/admin/businesses/${id}`, {

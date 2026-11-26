@@ -1,10 +1,24 @@
 import type {
   AdminBusinessDetailResource,
   AdminUserResource,
+  BusinessLendingResource,
   BusinessResource,
   IdentificationType,
+  LendingOverviewResource,
+  LendingSummaryResource,
+  LoanLendingResource,
 } from '../lib/api'
-import type { AdminUser, Business, KycStatus, BusinessStatus } from './types'
+import type {
+  AdminUser,
+  Business,
+  BusinessLending,
+  BusinessStatus,
+  KycStatus,
+  LendingBusiness,
+  LendingOverview,
+  LendingSummary,
+  Loan,
+} from './types'
 
 function asStatus<T extends string>(value: string, fallback: T, allowed: readonly T[]): T {
   return allowed.includes(value as T) ? (value as T) : fallback
@@ -95,6 +109,76 @@ export function mapUser(resource: AdminUserResource): AdminUser {
     businessesCount: resource.businesses_count ?? 0,
     createdAt: resource.created_at,
     updatedAt: resource.updated_at,
+  }
+}
+
+export function mapLendingSummary(resource: LendingSummaryResource): LendingSummary {
+  return {
+    loansCount: resource.loans_count,
+    disbursedLoansCount: resource.disbursed_loans_count,
+    activeLoansCount: resource.active_loans_count,
+    overdueLoansCount: resource.overdue_loans_count,
+    settledLoansCount: resource.settled_loans_count,
+    defaultedLoansCount: resource.defaulted_loans_count,
+    principalMinor: resource.principal_minor,
+    disbursedPrincipalMinor: resource.disbursed_principal_minor,
+    feesMinor: resource.fees_minor,
+    totalRepayableMinor: resource.total_repayable_minor,
+    repaidMinor: resource.repaid_minor,
+    feeRepaidMinor: resource.fee_repaid_minor,
+    principalRepaidMinor: resource.principal_repaid_minor,
+    outstandingMinor: resource.outstanding_minor,
+    averageAprBps: resource.average_apr_bps,
+    weightedAprBps: resource.weighted_apr_bps,
+  }
+}
+
+export function mapLoan(resource: LoanLendingResource): Loan {
+  return {
+    id: resource.id,
+    publicId: resource.public_id,
+    businessId: resource.business_id,
+    principalMinor: resource.principal_amount_minor,
+    feeMinor: resource.fee_amount_minor,
+    totalRepayableMinor: resource.total_repayable_minor,
+    amountRepaidMinor: resource.amount_repaid_minor,
+    feeRepaidMinor: resource.fee_repaid_minor,
+    principalRepaidMinor: resource.principal_repaid_minor,
+    outstandingMinor: resource.outstanding_balance_minor,
+    recoveryRateBps: resource.recovery_rate_bps,
+    maximumRepaymentDays: resource.maximum_repayment_days,
+    aprBps: resource.apr_bps,
+    status: resource.status,
+    disbursedAt: resource.disbursed_at,
+    dueAt: resource.due_at,
+    settledAt: resource.settled_at,
+    createdAt: resource.created_at,
+  }
+}
+
+export function mapLendingBusiness(
+  resource: LendingOverviewResource['businesses'][number],
+): LendingBusiness {
+  return {
+    businessId: resource.business_id,
+    publicId: resource.public_id,
+    name: resource.business_name,
+    status: resource.status,
+    summary: mapLendingSummary(resource.summary),
+  }
+}
+
+export function mapLendingOverview(resource: LendingOverviewResource): LendingOverview {
+  return {
+    summary: mapLendingSummary(resource.summary),
+    businesses: resource.businesses.map(mapLendingBusiness),
+  }
+}
+
+export function mapBusinessLending(resource: BusinessLendingResource): BusinessLending {
+  return {
+    summary: mapLendingSummary(resource.summary),
+    loans: resource.advances.map(mapLoan),
   }
 }
 

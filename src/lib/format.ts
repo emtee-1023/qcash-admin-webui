@@ -16,6 +16,11 @@ export function formatKES(minor: number, options?: { compact?: boolean; withSymb
   })}`
 }
 
+export function formatApr(bps: number) {
+  if (!Number.isFinite(bps) || bps <= 0) return '—'
+  return `${(bps / 100).toFixed(1)}%`
+}
+
 export function formatDate(value: string | null, options?: { short?: boolean }) {
   if (!value) return '—'
   const date = new Date(value)

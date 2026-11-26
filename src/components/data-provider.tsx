@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { api, type ApiError } from '../lib/api'
-import { mapBusiness, mapUser } from '../data/mappers'
-import type { AdminUser, Business } from '../data/types'
+import { mapBusiness, mapLendingOverview, mapUser } from '../data/mappers'
+import type { AdminUser, Business, LendingOverview } from '../data/types'
 import { useAuth } from './auth-context'
 import { DataContext, type DataContextValue } from './data-context'
 
@@ -11,6 +11,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [users, setUsers] = useState<AdminUser[]>([])
   const [businessTypes, setBusinessTypes] = useState<DataContextValue['businessTypes']>([])
   const [counties, setCounties] = useState<DataContextValue['counties']>([])
+  const [lending, setLending] = useState<LendingOverview | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -19,16 +20,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setRefreshing(true)
     setError(null)
     try {
-      const [businessResponse, userResponse, typeResponse, countyResponse] = await Promise.all([
-        api.listBusinesses(),
-        api.listUsers(),
-        api.listBusinessTypes(),
-        api.listCounties(),
-      ])
+      const [businessResponse, userResponse, typeResponse, countyResponse, lendingResponse] =
+        await Promise.all([
+          api.listBusinesses(),
+          api.listUsers(),
+          api.listBusinessTypes(),
+          api.listCounties(),
+          api.getLending().catch(() => null),
+        ])
       setBusinesses(businessResponse.data.map(mapBusiness))
       setUsers(userResponse.data.map(mapUser))
       setBusinessTypes(typeResponse.data)
       setCounties(countyResponse.data)
+      setLending(lendingResponse ? mapLendingOverview(lendingResponse) : null)
     } catch (caught) {
       const apiError = caught as ApiError
       if (apiError.status === 401) {
@@ -70,6 +74,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         users,
         businessTypes,
         counties,
+        lending,
         loading,
         refreshing,
         error,

@@ -17,7 +17,7 @@ import {
   TrendPill,
 } from '../components/ui'
 import type { AdminUser, Business } from '../data/types'
-import { formatKES, timeAgo } from '../lib/format'
+import { formatApr, formatKES, timeAgo } from '../lib/format'
 import { navigate } from '../lib/router'
 
 type Trend = {
@@ -155,7 +155,7 @@ function GrowthChart({ trend }: { trend: Trend }) {
 export function OverviewPage() {
   const toast = useToast()
   const { user } = useAuth()
-  const { businesses, users, loading, error, refresh } = useData()
+  const { businesses, users, lending, loading, error, refresh } = useData()
   const [range, setRange] = useState<'6m' | '12m'>('12m')
 
   const trend = useMemo(() => buildTrend(businesses, users, range), [businesses, range, users])
@@ -472,6 +472,93 @@ export function OverviewPage() {
               <p className="muted">No recent activity is available.</p>
             )}
           </div>
+        </Card>
+      </div>
+
+      <div className="dashboard-grid dashboard-grid--even">
+        <Card>
+          <CardHeader
+            title="Lending snapshot"
+            subtitle="Cash advances across the QCash network"
+            action={
+              <Button variant="ghost" size="sm" iconRight="arrowRight" onClick={() => navigate('/lending')}>
+                View lending
+              </Button>
+            }
+          />
+          {lending ? (
+            <>
+              <div className="mini-stats" style={{ marginTop: 0, paddingTop: 0, borderTop: 'none' }}>
+                <div className="mini-stat">
+                  <strong>{formatKES(lending.summary.disbursedPrincipalMinor, { compact: true })}</strong>
+                  <span>Total lent out</span>
+                </div>
+                <div className="mini-stat">
+                  <strong>{formatKES(lending.summary.repaidMinor, { compact: true })}</strong>
+                  <span>Repaid to date</span>
+                </div>
+                <div className="mini-stat">
+                  <strong>{formatKES(lending.summary.outstandingMinor, { compact: true })}</strong>
+                  <span>Outstanding</span>
+                </div>
+                <div className="mini-stat">
+                  <strong>{formatApr(lending.summary.weightedAprBps)}</strong>
+                  <span>Avg APR (minimum)</span>
+                </div>
+              </div>
+              <div className="section-divider" />
+              <div className="row-between">
+                <div>
+                  <p className="text-strong" style={{ fontSize: '0.83rem' }}>
+                    {lending.summary.activeLoansCount} active advances
+                  </p>
+                  <p className="muted" style={{ fontSize: '0.75rem' }}>
+                    {lending.summary.overdueLoansCount} overdue · {lending.summary.settledLoansCount} settled ·{' '}
+                    {lending.businesses.length} businesses borrowing
+                  </p>
+                </div>
+                <Button size="sm" variant="secondary" onClick={() => navigate('/lending')}>
+                  Open
+                </Button>
+              </div>
+            </>
+          ) : (
+            <p className="muted">Lending data is not available yet.</p>
+          )}
+        </Card>
+
+        <Card>
+          <CardHeader title="Lending health" subtitle="Recovery and pricing at a glance" />
+          {lending ? (
+            <>
+              <div className="account-line">
+                <span className="account-line__label">Principal repaid</span>
+                <span className="account-line__value">
+                  {formatKES(lending.summary.principalRepaidMinor, { compact: true })}
+                </span>
+              </div>
+              <div className="account-line">
+                <span className="account-line__label">Fees assessed</span>
+                <span className="account-line__value">
+                  {formatKES(lending.summary.feesMinor, { compact: true })}
+                </span>
+              </div>
+              <div className="account-line">
+                <span className="account-line__label">Weighted avg APR</span>
+                <span className="account-line__value">{formatApr(lending.summary.weightedAprBps)}</span>
+              </div>
+              <div className="account-line">
+                <span className="account-line__label">Simple avg APR</span>
+                <span className="account-line__value">{formatApr(lending.summary.averageAprBps)}</span>
+              </div>
+              <div className="inline-alert inline-alert--info" style={{ marginTop: 16 }}>
+                <Icon name="info" size={15} />
+                <span>APR is annualised over the contractual term, so it is the minimum possible rate.</span>
+              </div>
+            </>
+          ) : (
+            <p className="muted">Lending data is not available yet.</p>
+          )}
         </Card>
       </div>
 

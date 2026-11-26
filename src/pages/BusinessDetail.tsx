@@ -23,9 +23,9 @@ import {
 } from '../components/ui'
 import { useData } from '../components/data-context'
 import { api, type BusinessStatus, type KycStatus, type SubCountyResource, type WardResource } from '../lib/api'
-import { mapBusinessDetail } from '../data/mappers'
-import type { Business } from '../data/types'
-import { formatDate, formatDateTime, formatKES, titleCase } from '../lib/format'
+import { mapBusinessDetail, mapBusinessLending } from '../data/mappers'
+import type { Business, BusinessLending } from '../data/types'
+import { formatApr, formatDate, formatDateTime, formatKES, titleCase } from '../lib/format'
 import { navigate } from '../lib/router'
 
 const statusCopy: Array<{ value: BusinessStatus; label: string; hint: string }> = [
@@ -39,6 +39,17 @@ const paymentTone: Record<string, BadgeTone> = {
   active: 'green',
   pending: 'amber',
   inactive: 'gray',
+}
+
+const loanTone: Record<string, BadgeTone> = {
+  pending: 'amber',
+  approved: 'blue',
+  disbursing: 'blue',
+  active: 'green',
+  overdue: 'red',
+  settled: 'gray',
+  defaulted: 'red',
+  cancelled: 'gray',
 }
 
 type BusinessForm = {
@@ -99,6 +110,9 @@ export function BusinessDetailPage({ id }: { id: number }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [lending, setLending] = useState<BusinessLending | null>(null)
+  const [lendingLoading, setLendingLoading] = useState(true)
+  const [lendingError, setLendingError] = useState<string | null>(null)
   const [tab, setTab] = useState('overview')
   const [editOpen, setEditOpen] = useState(false)
   const [form, setForm] = useState<BusinessForm>(emptyForm)
@@ -120,9 +134,26 @@ export function BusinessDetailPage({ id }: { id: number }) {
     }
   }, [id])
 
+  const loadLending = useCallback(async () => {
+    setLendingLoading(true)
+    setLendingError(null)
+    try {
+      const response = await api.getBusinessLending(id)
+      setLending(mapBusinessLending(response))
+    } catch (caught) {
+      setLendingError((caught as Error).message || 'Unable to load lending data.')
+    } finally {
+      setLendingLoading(false)
+    }
+  }, [id])
+
   useEffect(() => {
     Promise.resolve().then(() => void loadBusiness())
   }, [loadBusiness])
+
+  useEffect(() => {
+    Promise.resolve().then(() => void loadLending())
+  }, [loadLending])
 
   useEffect(() => {
     if (!form.countyId) {
@@ -289,6 +320,7 @@ export function BusinessDetailPage({ id }: { id: number }) {
 
   const tabs = [
     { id: 'overview', label: 'Overview' },
+    { id: 'lending', label: 'Cash advances', count: lending?.loans.length ?? 0 },
     { id: 'team', label: 'Owners & team', count: business.owners.length },
     { id: 'payments', label: 'Payment accounts', count: business.paymentAccounts.length },
     { id: 'activity', label: 'Activity' },
@@ -575,6 +607,140 @@ export function BusinessDetailPage({ id }: { id: number }) {
                     </span>
                   </button>
                 ))}
+              </div>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {tab === 'lending' && (
+        <div className="detail-grid">
+          <div className="detail-column">
+            <Card>
+              <CardHeader
+                title="Loan book"
+                subtitle="Cash advances issued to this business"
+              />
+              {lendingLoading ? (
+                <LoadingState label="Loading advances" />
+              ) : lendingError ? (
+                <ErrorState message={lendingError} onRetry={() => void loadLending()} />
+              ) : !lending || lending.loans.length === 0 ? (
+                <EmptyState
+                  icon="banknote"
+                  title="No cash advances"
+                  description="This business has not taken a cash advance yet."
+                />
+              ) : (
+                <div className="table-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Advance</th>
+                        <th>Principal</th>
+                        <th>Fee</th>
+                        <th>Repaid</th>
+                        <th>Outstanding</th>
+                        <th>Term</th>
+                        <th>APR (min)</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lending.loans.map((loan) => (
+                        <tr key={loan.id}>
+                          <td>
+                            <div className="cell-strong mono">{loan.publicId}</div>
+                            <span style={{ fontSize: '0.71rem', color: 'var(--muted)' }}>
+                              {loan.disbursedAt
+                                ? `Disbursed ${formatDate(loan.disbursedAt)}`
+                                : 'Not disbursed'}
+                            </span>
+                          </td>
+                          <td className="mono">{formatKES(loan.principalMinor)}</td>
+                          <td className="mono">{formatKES(loan.feeMinor)}</td>
+                          <td className="mono">{formatKES(loan.amountRepaidMinor)}</td>
+                          <td className="mono">{formatKES(loan.outstandingMinor)}</td>
+                          <td className="nowrap">{loan.maximumRepaymentDays}d</td>
+                          <td>
+                            <Badge tone={loan.aprBps > 0 ? 'purple' : 'gray'}>
+                              {formatApr(loan.aprBps)}
+                            </Badge>
+                          </td>
+                          <td>
+                            <Badge tone={loanTone[loan.status ?? 'pending'] ?? 'gray'} dot>
+                              {titleCase(loan.status ?? 'pending')}
+                            </Badge>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          </div>
+
+          <div className="detail-column">
+            <Card>
+              <CardHeader title="Lending summary" subtitle="Totals for this business" />
+              {lending ? (
+                <>
+                  <div className="mini-stats" style={{ marginTop: 0, paddingTop: 0, borderTop: 'none' }}>
+                    <div className="mini-stat">
+                      <strong>{formatKES(lending.summary.disbursedPrincipalMinor, { compact: true })}</strong>
+                      <span>Total lent</span>
+                    </div>
+                    <div className="mini-stat">
+                      <strong>{formatKES(lending.summary.repaidMinor, { compact: true })}</strong>
+                      <span>Repaid</span>
+                    </div>
+                    <div className="mini-stat">
+                      <strong>{formatKES(lending.summary.outstandingMinor, { compact: true })}</strong>
+                      <span>Outstanding</span>
+                    </div>
+                    <div className="mini-stat">
+                      <strong>{formatApr(lending.summary.weightedAprBps)}</strong>
+                      <span>APR (minimum)</span>
+                    </div>
+                  </div>
+                  <div className="section-divider" />
+                  <div className="account-line">
+                    <span className="account-line__label">Advances</span>
+                    <span className="account-line__value">{lending.summary.loansCount}</span>
+                  </div>
+                  <div className="account-line">
+                    <span className="account-line__label">Active / overdue</span>
+                    <span className="account-line__value">
+                      {lending.summary.activeLoansCount} / {lending.summary.overdueLoansCount}
+                    </span>
+                  </div>
+                  <div className="account-line">
+                    <span className="account-line__label">Fees assessed</span>
+                    <span className="account-line__value">
+                      {formatKES(lending.summary.feesMinor, { compact: true })}
+                    </span>
+                  </div>
+                  <div className="account-line">
+                    <span className="account-line__label">Total repayable</span>
+                    <span className="account-line__value">
+                      {formatKES(lending.summary.totalRepayableMinor, { compact: true })}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <p className="muted">No lending summary is available for this business.</p>
+              )}
+            </Card>
+
+            <Card>
+              <CardHeader title="About APR" subtitle="How this rate is calculated" />
+              <div className="inline-alert inline-alert--info">
+                <Icon name="info" size={15} />
+                <span>
+                  APR = (fee / principal) × (365 / term days) × 100. It uses the contractual term,
+                  so the realised APR is higher if repayment takes longer.
+                </span>
               </div>
             </Card>
           </div>
